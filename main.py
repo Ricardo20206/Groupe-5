@@ -14,6 +14,8 @@ from fastapi import Depends, FastAPI, Header, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from strategy import PLAYER_NAME, decide_play, end_game_state, reset_turn
+
 app = FastAPI()
 
 #############################################################################################################
@@ -94,28 +96,30 @@ def root() -> str:
 
 @app.get("/name")
 def name() -> str:
-    return "Groupe 5"
+    return PLAYER_NAME
 
 
 @app.get("/start_game")
 def start_game(game_id: GameIdDependency) -> DopynionResponseStr:
+    reset_turn(game_id)
     return DopynionResponseStr(game_id=game_id, decision="OK")
 
 
 @app.get("/start_turn")
 def start_turn(game_id: GameIdDependency) -> DopynionResponseStr:
+    reset_turn(game_id)
     return DopynionResponseStr(game_id=game_id, decision="OK")
 
 
 @app.post("/play")
-def play(_game: Game, game_id: GameIdDependency) -> DopynionResponseStr:
-    # Pour l'instant : on passe directement le tour (pas d'action / achat).
-    # C'est ici qu'on implémentera la stratégie (actions puis achats).
-    return DopynionResponseStr(game_id=game_id, decision="END_TURN")
+def play(game: Game, game_id: GameIdDependency) -> DopynionResponseStr:
+    decision = decide_play(game, game_id)
+    return DopynionResponseStr(game_id=game_id, decision=decision)
 
 
 @app.get("/end_game")
 def end_game(game_id: GameIdDependency) -> DopynionResponseStr:
+    end_game_state(game_id)
     return DopynionResponseStr(game_id=game_id, decision="OK")
 
 
