@@ -1,13 +1,18 @@
-"""Tests Big Money simple."""
+"""Tests Big Money (format vincent_bm)."""
 
 from __future__ import annotations
 
 from dopynion.data_model import CardName, Cards, Game, Player
 
-from strategy import choose_buy, decide_play, end_game_state, hand_money, reset_turn
+from strategy import choose_buy, decide_play, end_game_state, reset_turn, _memory
 
 
-def make_game(hand: dict[CardName, int], *, provinces: int = 8) -> Game:
+def make_game(
+    hand: dict[CardName, int],
+    *,
+    provinces: int = 8,
+    smithy_stock: int = 10,
+) -> Game:
     return Game(
         finished=False,
         players=[
@@ -21,6 +26,7 @@ def make_game(hand: dict[CardName, int], *, provinces: int = 8) -> Game:
                 CardName.SILVER: 40,
                 CardName.DUCHY: 8,
                 CardName.ESTATE: 8,
+                CardName.SMITHY: smithy_stock,
             }
         ),
     )
@@ -33,25 +39,31 @@ def check(label: str, got: object, expected: object) -> None:
 
 
 def main() -> None:
-    check(
-        "argent",
-        hand_money(Cards(quantities={CardName.COPPER: 3, CardName.SILVER: 1})),
-        5,
-    )
     g = make_game({CardName.COPPER: 2})
-    check("$2 -> rien", choose_buy(g, 2), None)
-    check("$3 -> silver", choose_buy(g, 3), CardName.SILVER)
-    check("$5 -> silver", choose_buy(g, 5), CardName.SILVER)
-    check("$6 -> gold", choose_buy(g, 6), CardName.GOLD)
-    check("$8 -> province", choose_buy(g, 8), CardName.PROVINCE)
-    g4 = make_game({CardName.COPPER: 5}, provinces=4)
-    check("$5 meme en fin -> silver", choose_buy(g4, 5), CardName.SILVER)
+    mem = _memory("prio")
+    mem.smithies_bought = 0
+    check("$3 silver", choose_buy(g, 3, mem), CardName.SILVER)
+    check("$4 smithy", choose_buy(g, 4, mem), CardName.SMITHY)
+    check("$5 p8 silver", choose_buy(g, 5, mem), CardName.SMITHY)
+    mem.smithies_bought = 1
+    check("$5 p8 apres smithy -> silver", choose_buy(g, 5, mem), CardName.SILVER)
+    check("$5 p5 duchy", choose_buy(make_game({}, provinces=5), 5, mem), CardName.DUCHY)
+    check("$5 p6 silver", choose_buy(make_game({}, provinces=6), 5, mem), CardName.SILVER)
+    check("$2 p2 estate", choose_buy(make_game({}, provinces=2), 2, mem), CardName.ESTATE)
+    check("$2 p8 rien", choose_buy(make_game({}, provinces=8), 2, mem), None)
+    check(
+        "$4 sans pile smithy",
+        choose_buy(make_game({}, smithy_stock=0), 4, mem),
+        CardName.SILVER,
+    )
 
     end_game_state("t1")
     reset_turn("t1")
-    g5 = make_game({CardName.COPPER: 3, CardName.SILVER: 1})
-    check("BUY silver", decide_play(g5, "t1"), "BUY silver")
-    check("END_TURN", decide_play(g5, "t1"), "END_TURN")
+    gs = make_game({CardName.SMITHY: 1, CardName.COPPER: 2, CardName.SILVER: 1})
+    check("ACTION smithy", decide_play(gs, "t1"), "ACTION smithy")
+    check("puis BUY silver", decide_play(gs, "t1"), "BUY silver")
+    check("puis END_TURN", decide_play(gs, "t1"), "END_TURN")
+
     print("Tous les tests OK.")
 
 
