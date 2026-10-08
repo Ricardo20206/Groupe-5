@@ -1,4 +1,4 @@
-"""Simule un tour Big Money contre le serveur local (port 8000)."""
+"""Simule des tours Big Money+ contre le serveur local (port 8000)."""
 
 from __future__ import annotations
 
@@ -8,17 +8,21 @@ import urllib.error
 import urllib.request
 
 BASE = "http://127.0.0.1:8000"
-GAME_ID = "test-1"
 
 
-def request(method: str, path: str, body: dict | None = None) -> dict | str:
+def request(
+    method: str,
+    path: str,
+    game_id: str,
+    body: dict | None = None,
+) -> dict | str:
     data = None if body is None else json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         f"{BASE}{path}",
         data=data,
         method=method,
         headers={
-            "X-Game-Id": GAME_ID,
+            "X-Game-Id": game_id,
             "Content-Type": "application/json",
             "Accept": "application/json",
         },
@@ -31,37 +35,82 @@ def request(method: str, path: str, body: dict | None = None) -> dict | str:
             return raw
 
 
-def main() -> None:
-    print("1) /name ->", request("GET", "/name"))
-    print("2) /start_turn ->", request("GET", "/start_turn"))
-
-    # Nom volontairement différent de "Groupe 5" : on doit quand même acheter
-    # grâce à la main non nulle (comme en match réel).
-    body = {
+def body_for(hand: dict, provinces: int = 8, smithy: int = 10) -> dict:
+    return {
         "finished": False,
         "players": [
-            {
-                "name": "AutreNomArbitre",
-                "score": 0,
-                "hand": {"quantities": {"copper": 3, "silver": 1, "estate": 1}},
-            },
+            {"name": "AutreNomArbitre", "score": 0, "hand": {"quantities": hand}},
             {"name": "Adverse", "score": 0, "hand": None},
         ],
         "stock": {
             "quantities": {
-                "province": 8,
+                "province": provinces,
                 "gold": 30,
                 "silver": 40,
                 "duchy": 8,
                 "estate": 8,
+                "smithy": smithy,
             }
         },
     }
 
-    print("3) /play (1er) ->", request("POST", "/play", body))
-    print("4) /play (2e)  ->", request("POST", "/play", body))
-    print()
-    print("Attendu: BUY silver puis END_TURN (meme avec un nom different)")
+
+def run_scenario(
+    title: str,
+    game_id: str,
+    hand: dict,
+    expected: list[str],
+    *,
+    provinces: int = 8,
+) -> None:
+    print(f"\n=== {title} ===")
+    print("start_turn ->", request("GET", "/start_turn", game_id))
+    payload = body_for(hand, provinces=provinces)
+    for i, exp in enumerate(expected, start=1):
+        got = request("POST", "/play", game_id, payload)
+        decision = got["decision"] if isinstance(got, dict) else got
+        ok = "OK" if decision == exp else "FAIL"
+        print(f"  play #{i} -> {decision!r} [{ok}] (attendu {exp!r})")
+        if decision != exp:
+            raise SystemExit(1)
+
+
+def main() -> None:
+    print("/name ->", request("GET", "/name", "boot"))
+
+    run_scenario(
+        "$5 debut -> Smithy (upgrade vs Big Money)",
+        "s1",
+        {"copper": 3, "silver": 1, "estate": 1},
+        ["BUY smithy", "END_TURN"],
+    )
+    run_scenario(
+        "$5 fin de partie -> Duchy",
+        "s2",
+        {"copper": 3, "silver": 1},
+        ["BUY duchy", "END_TURN"],
+        provinces=4,
+    )
+    run_scenario(
+        "$8 -> Province",
+        "s3",
+        {"gold": 2, "silver": 1},
+        ["BUY province", "END_TURN"],
+    )
+    run_scenario(
+        "Smithy en main puis achat",
+        "s4",
+        {"smithy": 1, "copper": 2, "silver": 1},
+        ["smithy", "BUY silver", "END_TURN"],
+    )
+    run_scenario(
+        "$4 -> achete 1 Smithy",
+        "s5",
+        {"copper": 2, "silver": 1},
+        ["BUY smithy", "END_TURN"],
+    )
+
+    print("\nTous les scenarios HTTP OK.")
 
 
 if __name__ == "__main__":
