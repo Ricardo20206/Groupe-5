@@ -88,10 +88,10 @@ def main() -> None:
     )
     run_scenario("$8 -> province", "s3", {"gold": 2, "silver": 1}, ["BUY province", "END_TURN"])
     run_scenario(
-        "ACTION smithy puis silver",
+        "ACTION smithy puis BUY smithy",
         "s4",
         {"smithy": 1, "copper": 2, "silver": 1},
-        ["ACTION smithy", "BUY silver", "END_TURN"],
+        ["ACTION smithy", "BUY smithy", "END_TURN"],
     )
     run_scenario(
         "$4 sans smithy en stock -> silver",

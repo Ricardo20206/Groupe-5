@@ -21,7 +21,8 @@ from dopynion.data_model import CardName, Cards, Game, Player
 logger = logging.getLogger("strategy")
 
 PLAYER_NAME = "Groupe 5"
-MAX_SMITHY = 1
+# vincent_bm en achete 3 puis passe au Silver
+MAX_SMITHY = 3
 PROVINCES_LEFT_FOR_DUCHY = 5
 PROVINCES_LEFT_FOR_ESTATE = 2
 
@@ -90,13 +91,6 @@ def can_buy(game: Game, card_name: CardName) -> bool:
     return stock_quantity(game.stock, card_name) > 0
 
 
-def smithy_owned(hand: Cards | None, mem: GameMemory) -> int:
-    owned = mem.smithies_bought
-    if hand_quantity(hand, CardName.SMITHY) > 0:
-        owned = max(owned, 1)
-    return owned
-
-
 def choose_buy(
     game: Game,
     money: int,
@@ -117,7 +111,7 @@ def choose_buy(
         return CardName.DUCHY
     if (
         money >= 4
-        and smithy_owned(hand, mem) < MAX_SMITHY
+        and mem.smithies_bought < MAX_SMITHY
         and can_buy(game, CardName.SMITHY)
     ):
         return CardName.SMITHY

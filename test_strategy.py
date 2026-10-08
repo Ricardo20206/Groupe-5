@@ -44,9 +44,9 @@ def main() -> None:
     mem.smithies_bought = 0
     check("$3 silver", choose_buy(g, 3, mem), CardName.SILVER)
     check("$4 smithy", choose_buy(g, 4, mem), CardName.SMITHY)
-    check("$5 p8 silver", choose_buy(g, 5, mem), CardName.SMITHY)
-    mem.smithies_bought = 1
-    check("$5 p8 apres smithy -> silver", choose_buy(g, 5, mem), CardName.SILVER)
+    check("$5 p8 smithy", choose_buy(g, 5, mem), CardName.SMITHY)
+    mem.smithies_bought = 3
+    check("$5 p8 apres 3 smithy -> silver", choose_buy(g, 5, mem), CardName.SILVER)
     check("$5 p5 duchy", choose_buy(make_game({}, provinces=5), 5, mem), CardName.DUCHY)
     check("$5 p6 silver", choose_buy(make_game({}, provinces=6), 5, mem), CardName.SILVER)
     check("$2 p2 estate", choose_buy(make_game({}, provinces=2), 2, mem), CardName.ESTATE)
@@ -61,7 +61,7 @@ def main() -> None:
     reset_turn("t1")
     gs = make_game({CardName.SMITHY: 1, CardName.COPPER: 2, CardName.SILVER: 1})
     check("ACTION smithy", decide_play(gs, "t1"), "ACTION smithy")
-    check("puis BUY silver", decide_play(gs, "t1"), "BUY silver")
+    check("puis BUY smithy", decide_play(gs, "t1"), "BUY smithy")
     check("puis END_TURN", decide_play(gs, "t1"), "END_TURN")
 
     print("Tous les tests OK.")
