@@ -1,4 +1,4 @@
-"""Simule des tours Big Money sûr contre le serveur local (port 8000)."""
+"""Simule Big Money simple contre le serveur local (port 8000)."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def request(
             return raw
 
 
-def body_for(hand: dict, provinces: int = 8) -> dict:
+def body_for(hand: dict) -> dict:
     return {
         "finished": False,
         "players": [
@@ -44,7 +44,7 @@ def body_for(hand: dict, provinces: int = 8) -> dict:
         ],
         "stock": {
             "quantities": {
-                "province": provinces,
+                "province": 8,
                 "gold": 30,
                 "silver": 40,
                 "duchy": 8,
@@ -54,17 +54,10 @@ def body_for(hand: dict, provinces: int = 8) -> dict:
     }
 
 
-def run_scenario(
-    title: str,
-    game_id: str,
-    hand: dict,
-    expected: list[str],
-    *,
-    provinces: int = 8,
-) -> None:
+def run_scenario(title: str, game_id: str, hand: dict, expected: list[str]) -> None:
     print(f"\n=== {title} ===")
     print("start_turn ->", request("GET", "/start_turn", game_id))
-    payload = body_for(hand, provinces=provinces)
+    payload = body_for(hand)
     for i, exp in enumerate(expected, start=1):
         got = request("POST", "/play", game_id, payload)
         decision = got["decision"] if isinstance(got, dict) else got
@@ -77,17 +70,16 @@ def run_scenario(
 def main() -> None:
     print("/name ->", request("GET", "/name", "boot"))
     run_scenario(
-        "$5 debut -> Silver",
+        "$5 -> Silver",
         "s1",
         {"copper": 3, "silver": 1},
         ["BUY silver", "END_TURN"],
     )
     run_scenario(
-        "$5 fin -> Duchy",
+        "$6 -> Gold",
         "s2",
-        {"copper": 3, "silver": 1},
-        ["BUY duchy", "END_TURN"],
-        provinces=4,
+        {"gold": 2},
+        ["BUY gold", "END_TURN"],
     )
     run_scenario(
         "$8 -> Province",

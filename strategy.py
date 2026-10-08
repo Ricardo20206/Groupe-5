@@ -1,9 +1,4 @@
-"""
-Stratégie Big Money sûre pour Dopynion.
-
-Aucune carte Action (évite les éliminations pour coup invalide).
-Économie Silver → Gold → Province, avec Duchy/Estate seulement en fin de partie.
-"""
+"""Stratégie Big Money simple pour Dopynion (aucune Action)."""
 
 from __future__ import annotations
 
@@ -15,8 +10,6 @@ from dopynion.data_model import CardName, Cards, Game, Player
 logger = logging.getLogger("strategy")
 
 PLAYER_NAME = "Groupe 5"
-PROVINCES_LEFT_FOR_DUCHY = 5
-PROVINCES_LEFT_FOR_ESTATE = 2
 
 # game_id -> True si on a déjà effectué un achat ce tour
 _bought_this_turn: dict[str, bool] = {}
@@ -61,38 +54,18 @@ def can_buy(game: Game, card_name: CardName) -> bool:
 
 
 def choose_buy(game: Game, money: int) -> CardName | None:
-    """
-    1. Province ($8+)
-    2. Gold ($6–7)
-    3. Duchy ($5) si ≤ 5 Provinces restantes
-    4. Silver ($3–5)
-    5. Estate ($2) si ≤ 2 Provinces restantes
-    """
-    provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
-
+    """Province ≥8, Gold ≥6, Silver ≥3, sinon rien."""
     if money >= 8 and can_buy(game, CardName.PROVINCE):
         return CardName.PROVINCE
     if money >= 6 and can_buy(game, CardName.GOLD):
         return CardName.GOLD
-    if (
-        money >= 5
-        and provinces_left <= PROVINCES_LEFT_FOR_DUCHY
-        and can_buy(game, CardName.DUCHY)
-    ):
-        return CardName.DUCHY
     if money >= 3 and can_buy(game, CardName.SILVER):
         return CardName.SILVER
-    if (
-        money >= 2
-        and provinces_left <= PROVINCES_LEFT_FOR_ESTATE
-        and can_buy(game, CardName.ESTATE)
-    ):
-        return CardName.ESTATE
     return None
 
 
 def decide_play(game: Game, game_id: str) -> str:
-    """Un seul BUY par tour, puis END_TURN. Aucune Action."""
+    """Un seul BUY par tour, puis END_TURN."""
     if _bought_this_turn.get(game_id):
         return "END_TURN"
 

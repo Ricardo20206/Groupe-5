@@ -1,4 +1,4 @@
-"""Tests unitaires Big Money sûr (sans Action)."""
+"""Tests Big Money simple."""
 
 from __future__ import annotations
 
@@ -7,11 +7,7 @@ from dopynion.data_model import CardName, Cards, Game, Player
 from strategy import choose_buy, decide_play, end_game_state, hand_money, reset_turn
 
 
-def make_game(
-    hand: dict[CardName, int],
-    *,
-    provinces: int = 8,
-) -> Game:
+def make_game(hand: dict[CardName, int], *, provinces: int = 8) -> Game:
     return Game(
         finished=False,
         players=[
@@ -25,7 +21,6 @@ def make_game(
                 CardName.SILVER: 40,
                 CardName.DUCHY: 8,
                 CardName.ESTATE: 8,
-                CardName.SMITHY: 10,
             }
         ),
     )
@@ -43,24 +38,20 @@ def main() -> None:
         hand_money(Cards(quantities={CardName.COPPER: 3, CardName.SILVER: 1})),
         5,
     )
-
-    g = make_game({CardName.COPPER: 2}, provinces=8)
-    check("$2 debut -> rien", choose_buy(g, 2), None)
+    g = make_game({CardName.COPPER: 2})
+    check("$2 -> rien", choose_buy(g, 2), None)
     check("$3 -> silver", choose_buy(g, 3), CardName.SILVER)
-    check("$4 -> silver (pas smithy)", choose_buy(g, 4), CardName.SILVER)
-    check("$5 debut -> silver", choose_buy(g, 5), CardName.SILVER)
+    check("$5 -> silver", choose_buy(g, 5), CardName.SILVER)
     check("$6 -> gold", choose_buy(g, 6), CardName.GOLD)
     check("$8 -> province", choose_buy(g, 8), CardName.PROVINCE)
-
-    g_end = make_game({CardName.COPPER: 5}, provinces=4)
-    check("$5 fin -> duchy", choose_buy(g_end, 5), CardName.DUCHY)
+    g4 = make_game({CardName.COPPER: 5}, provinces=4)
+    check("$5 meme en fin -> silver", choose_buy(g4, 5), CardName.SILVER)
 
     end_game_state("t1")
     reset_turn("t1")
     g5 = make_game({CardName.COPPER: 3, CardName.SILVER: 1})
     check("BUY silver", decide_play(g5, "t1"), "BUY silver")
     check("END_TURN", decide_play(g5, "t1"), "END_TURN")
-
     print("Tous les tests OK.")
 
 
