@@ -1,4 +1,4 @@
-"""Simule des tours Big Money+ contre le serveur local (port 8000)."""
+"""Simule des tours Big Money sûr contre le serveur local (port 8000)."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def request(
             return raw
 
 
-def body_for(hand: dict, provinces: int = 8, smithy: int = 10) -> dict:
+def body_for(hand: dict, provinces: int = 8) -> dict:
     return {
         "finished": False,
         "players": [
@@ -49,7 +49,6 @@ def body_for(hand: dict, provinces: int = 8, smithy: int = 10) -> dict:
                 "silver": 40,
                 "duchy": 8,
                 "estate": 8,
-                "smithy": smithy,
             }
         },
     }
@@ -77,15 +76,14 @@ def run_scenario(
 
 def main() -> None:
     print("/name ->", request("GET", "/name", "boot"))
-
     run_scenario(
-        "$5 debut -> Smithy (upgrade vs Big Money)",
+        "$5 debut -> Silver",
         "s1",
-        {"copper": 3, "silver": 1, "estate": 1},
-        ["BUY smithy", "END_TURN"],
+        {"copper": 3, "silver": 1},
+        ["BUY silver", "END_TURN"],
     )
     run_scenario(
-        "$5 fin de partie -> Duchy",
+        "$5 fin -> Duchy",
         "s2",
         {"copper": 3, "silver": 1},
         ["BUY duchy", "END_TURN"],
@@ -97,19 +95,6 @@ def main() -> None:
         {"gold": 2, "silver": 1},
         ["BUY province", "END_TURN"],
     )
-    run_scenario(
-        "Smithy en main puis achat",
-        "s4",
-        {"smithy": 1, "copper": 2, "silver": 1},
-        ["smithy", "BUY silver", "END_TURN"],
-    )
-    run_scenario(
-        "$4 -> achete 1 Smithy",
-        "s5",
-        {"copper": 2, "silver": 1},
-        ["BUY smithy", "END_TURN"],
-    )
-
     print("\nTous les scenarios HTTP OK.")
 
 
@@ -117,7 +102,7 @@ if __name__ == "__main__":
     try:
         main()
     except urllib.error.URLError as exc:
-        print("Serveur inaccessible. Lance d'abord dans un autre terminal:")
+        print("Serveur inaccessible. Lance d'abord:")
         print("  .\\.venv\\Scripts\\uvicorn.exe main:app --reload --port 8000")
         print("Erreur:", exc)
         sys.exit(1)
