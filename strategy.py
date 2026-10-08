@@ -1,12 +1,18 @@
-"""Stratégie Big Money pour Dopynion."""
+"""Stratégie Big Money + points de victoire pour Dopynion."""
 
 from __future__ import annotations
+
+import logging
 
 from dopynion.cards import Card
 from dopynion.data_model import CardName, Cards, Game, Player
 
+logger = logging.getLogger("strategy")
+
 PLAYER_NAME = "Groupe 5"
+# Seuils de fin de partie (Provinces restantes)
 PROVINCES_LEFT_FOR_DUCHY = 5
+PROVINCES_LEFT_FOR_ESTATE = 2
 
 # game_id -> True si on a déjà effectué un achat ce tour
 _bought_this_turn: dict[str, bool] = {}
@@ -21,6 +27,13 @@ def end_game_state(game_id: str) -> None:
 
 
 def find_our_player(game: Game) -> Player | None:
+    """
+    L'arbitre n'envoie la main que pour le joueur qui joue.
+    On privilégie donc hand is not None (plus fiable que le nom).
+    """
+    for player in game.players:
+        if player.hand is not None:
+            return player
     for player in game.players:
         if player.name == PLAYER_NAME:
             return player
@@ -47,7 +60,14 @@ def can_buy(game: Game, card_name: CardName) -> bool:
 
 
 def choose_buy(game: Game, money: int) -> CardName | None:
-    """Priorité Big Money : Province > Gold > Duchy (fin) > Silver."""
+    """
+    Priorité :
+    1. Province (PV) dès que possible
+    2. Gold (économie pour plus de Provinces)
+    3. Duchy en fin de partie
+    4. Silver (économie)
+    5. Estate tout en fin de partie (dernier recours PV)
+    """
     provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
 
     if money >= 8 and can_buy(game, CardName.PROVINCE):
@@ -62,25 +82,50 @@ def choose_buy(game: Game, money: int) -> CardName | None:
         return CardName.DUCHY
     if money >= 3 and can_buy(game, CardName.SILVER):
         return CardName.SILVER
+    if (
+        money >= 2
+        and provinces_left <= PROVINCES_LEFT_FOR_ESTATE
+        and can_buy(game, CardName.ESTATE)
+    ):
+        return CardName.ESTATE
     return None
 
 
 def decide_play(game: Game, game_id: str) -> str:
     """
     Décision pour POST /play.
-    Phase 1 Big Money : pas d'action, un seul achat par tour, puis END_TURN.
+    Big Money + VP : pas d'action, un seul achat par tour, puis END_TURN.
     """
     if _bought_this_turn.get(game_id):
         return "END_TURN"
 
     player = find_our_player(game)
-    if player is None:
+    if player is None or player.hand is None:
+        logger.warning(
+            "game=%s aucun joueur avec main (names=%s)",
+            game_id,
+            [p.name for p in game.players],
+        )
         return "END_TURN"
 
     money = hand_money(player.hand)
     card = choose_buy(game, money)
     if card is None:
+        logger.info(
+            "game=%s player=%s money=%s -> END_TURN",
+            game_id,
+            player.name,
+            money,
+        )
         return "END_TURN"
 
     _bought_this_turn[game_id] = True
-    return f"BUY {card.value}"
+    decision = f"BUY {card.value}"
+    logger.info(
+        "game=%s player=%s money=%s -> %s",
+        game_id,
+        player.name,
+        money,
+        decision,
+    )
+    return decision

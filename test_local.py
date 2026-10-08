@@ -35,14 +35,17 @@ def main() -> None:
     print("1) /name ->", request("GET", "/name"))
     print("2) /start_turn ->", request("GET", "/start_turn"))
 
+    # Nom volontairement différent de "Groupe 5" : on doit quand même acheter
+    # grâce à la main non nulle (comme en match réel).
     body = {
         "finished": False,
         "players": [
             {
-                "name": "Groupe 5",
+                "name": "AutreNomArbitre",
                 "score": 0,
                 "hand": {"quantities": {"copper": 3, "silver": 1, "estate": 1}},
-            }
+            },
+            {"name": "Adverse", "score": 0, "hand": None},
         ],
         "stock": {
             "quantities": {
@@ -50,6 +53,7 @@ def main() -> None:
                 "gold": 30,
                 "silver": 40,
                 "duchy": 8,
+                "estate": 8,
             }
         },
     }
@@ -57,7 +61,7 @@ def main() -> None:
     print("3) /play (1er) ->", request("POST", "/play", body))
     print("4) /play (2e)  ->", request("POST", "/play", body))
     print()
-    print("Attendu: BUY silver puis END_TURN")
+    print("Attendu: BUY silver puis END_TURN (meme avec un nom different)")
 
 
 if __name__ == "__main__":

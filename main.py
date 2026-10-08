@@ -1,4 +1,5 @@
 import html
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 
 from strategy import PLAYER_NAME, decide_play, end_game_state, reset_turn
 
+logging.basicConfig(level=logging.INFO)
 app = FastAPI()
 
 #############################################################################################################
