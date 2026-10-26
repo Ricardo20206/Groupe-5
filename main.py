@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Header, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from strategy import PLAYER_NAME, decide_play, end_game_state, reset_turn
+from strategy import PLAYER_NAME, decide_play, end_game_state, init_game, reset_turn
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
@@ -103,7 +103,7 @@ def name() -> str:
 
 @app.get("/start_game")
 def start_game(game_id: GameIdDependency) -> DopynionResponseStr:
-    reset_turn(game_id)
+    init_game(game_id)
     return DopynionResponseStr(game_id=game_id, decision="OK")
 
 

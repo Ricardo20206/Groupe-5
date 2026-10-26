@@ -1,4 +1,4 @@
-"""Compare notre bot local au comportement vincent_bm."""
+"""Scénarios HTTP contre le serveur local."""
 
 from __future__ import annotations
 
@@ -35,23 +35,36 @@ def request(
             return raw
 
 
-def body_for(hand: dict, provinces: int = 8, smithy: int = 10) -> dict:
+def body_for(
+    hand: dict,
+    provinces: int = 8,
+    *,
+    stock_extra: dict | None = None,
+) -> dict:
+    stock = {
+        "province": provinces,
+        "gold": 30,
+        "silver": 40,
+        "duchy": 8,
+        "estate": 8,
+        "smithy": 10,
+        "village": 10,
+        "farmingvillage": 10,
+        "witch": 10,
+        "councilroom": 10,
+        "hireling": 10,
+        "distantshore": 10,
+        "curse": 30,
+    }
+    if stock_extra:
+        stock.update(stock_extra)
     return {
         "finished": False,
         "players": [
             {"name": "AutreNom", "score": 0, "hand": {"quantities": hand}},
             {"name": "Adverse", "score": 0, "hand": None},
         ],
-        "stock": {
-            "quantities": {
-                "province": provinces,
-                "gold": 30,
-                "silver": 40,
-                "duchy": 8,
-                "estate": 8,
-                "smithy": smithy,
-            }
-        },
+        "stock": {"quantities": stock},
     }
 
 
@@ -62,11 +75,12 @@ def run_scenario(
     expected: list[str],
     *,
     provinces: int = 8,
-    smithy: int = 10,
+    stock_extra: dict | None = None,
 ) -> None:
     print(f"\n=== {title} ===")
+    request("GET", "/start_game", game_id)
     request("GET", "/start_turn", game_id)
-    payload = body_for(hand, provinces=provinces, smithy=smithy)
+    payload = body_for(hand, provinces=provinces, stock_extra=stock_extra)
     for i, exp in enumerate(expected, start=1):
         got = request("POST", "/play", game_id, payload)
         decision = got["decision"] if isinstance(got, dict) else got
@@ -78,7 +92,12 @@ def run_scenario(
 
 def main() -> None:
     print("/name ->", request("GET", "/name", "boot"))
-    run_scenario("$5 -> smithy", "s1", {"copper": 3, "silver": 1}, ["BUY smithy", "END_TURN"])
+    run_scenario(
+        "$5 -> witch",
+        "s1",
+        {"copper": 3, "silver": 1},
+        ["BUY witch", "END_TURN"],
+    )
     run_scenario(
         "$5 fin -> duchy",
         "s2",
@@ -86,19 +105,34 @@ def main() -> None:
         ["BUY duchy", "END_TURN"],
         provinces=4,
     )
-    run_scenario("$8 -> province", "s3", {"gold": 2, "silver": 1}, ["BUY province", "END_TURN"])
     run_scenario(
-        "ACTION smithy puis BUY smithy",
-        "s4",
-        {"smithy": 1, "copper": 2, "silver": 1},
-        ["ACTION smithy", "BUY smithy", "END_TURN"],
+        "$8 -> province",
+        "s3",
+        {"gold": 2, "silver": 1},
+        ["BUY province", "END_TURN"],
     )
     run_scenario(
-        "$4 sans smithy en stock -> silver",
+        "Village puis Smithy puis buy",
+        "s4",
+        {"village": 1, "smithy": 1, "copper": 2, "silver": 1},
+        ["ACTION village", "ACTION smithy", "BUY farmingvillage", "END_TURN"],
+    )
+    run_scenario(
+        "$4 sans moteur en stock -> silver",
         "s5",
         {"copper": 2, "silver": 1},
         ["BUY silver", "END_TURN"],
-        smithy=0,
+        stock_extra={
+            "smithy": 0,
+            "farmingvillage": 0,
+            "village": 0,
+        },
+    )
+    run_scenario(
+        "$6 -> hireling",
+        "s6",
+        {"gold": 2},
+        ["BUY hireling", "END_TURN"],
     )
     print("\nTous les scenarios HTTP OK.")
 
