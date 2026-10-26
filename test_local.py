@@ -47,13 +47,7 @@ def body_for(
         "silver": 40,
         "duchy": 8,
         "estate": 8,
-        "smithy": 10,
-        "village": 10,
-        "farmingvillage": 10,
-        "witch": 10,
-        "councilroom": 10,
-        "hireling": 10,
-        "distantshore": 10,
+        "copper": 60,
         "curse": 30,
     }
     if stock_extra:
@@ -93,46 +87,37 @@ def run_scenario(
 def main() -> None:
     print("/name ->", request("GET", "/name", "boot"))
     run_scenario(
-        "$5 -> witch",
+        "BM $6 gold (pas d'actions kingdom)",
         "s1",
-        {"copper": 3, "silver": 1},
-        ["BUY witch", "END_TURN"],
+        {"gold": 2},
+        ["BUY gold", "END_TURN"],
     )
     run_scenario(
-        "$5 fin -> duchy",
+        "$5 market si dispo",
         "s2",
         {"copper": 3, "silver": 1},
-        ["BUY duchy", "END_TURN"],
-        provinces=4,
+        ["BUY market", "END_TURN"],
+        stock_extra={"market": 10},
     )
     run_scenario(
-        "$8 -> province",
+        "$5 witch si curse",
         "s3",
+        {"copper": 3, "silver": 1},
+        ["BUY witch", "END_TURN"],
+        stock_extra={"witch": 10, "market": 10},
+    )
+    run_scenario(
+        "$8 province",
+        "s4",
         {"gold": 2, "silver": 1},
         ["BUY province", "END_TURN"],
     )
     run_scenario(
-        "Village puis Smithy puis buy",
-        "s4",
-        {"village": 1, "smithy": 1, "copper": 2, "silver": 1},
-        ["ACTION village", "ACTION smithy", "BUY farmingvillage", "END_TURN"],
-    )
-    run_scenario(
-        "$4 sans moteur en stock -> silver",
+        "Port puis Smithy",
         "s5",
-        {"copper": 2, "silver": 1},
-        ["BUY silver", "END_TURN"],
-        stock_extra={
-            "smithy": 0,
-            "farmingvillage": 0,
-            "village": 0,
-        },
-    )
-    run_scenario(
-        "$6 -> hireling",
-        "s6",
-        {"gold": 2},
-        ["BUY hireling", "END_TURN"],
+        {"port": 1, "smithy": 1, "copper": 2, "silver": 1},
+        ["ACTION port", "ACTION smithy", "BUY port", "END_TURN"],
+        stock_extra={"port": 10, "smithy": 10},
     )
     print("\nTous les scenarios HTTP OK.")
 
