@@ -2,8 +2,9 @@
 Stratégie adaptative : Big Money + attaques.
 
 Lit le stock : n'achète / ne joue que des cartes réellement disponibles.
-Priorité : Province/Colonie, puis les attaques qui gênent (Sorcière, Bandit,
-Milice, Bureaucrate), Hireling, Or, puis le moteur (Labo, Festival, Marché…).
+Priorité : Province/Colonie, une Sorcière, un Bandit, une Milice, puis Or.
+Chapelle dès que la Sorcière est au royaume. Pas de Chambre du conseil,
+de Bureaucrate ni de Jardin.
 
 Les hooks de l'arbitre (défausse, écart, réception) choisissent toujours une
 carte de la liste reçue : on jette le rebut, on garde l'argent et les attaques.
@@ -30,15 +31,14 @@ PROVINCES_STOP_ACTIONS = 4
 # Caps par type (évite d'asphyxier le deck)
 CAPS: dict[CardName, int] = {
     CardName.HIRELING: 3,
-    CardName.WITCH: 2,
+    CardName.WITCH: 1,
+    CardName.CHAPEL: 1,
     CardName.LABORATORY: 2,
     CardName.FESTIVAL: 2,
     CardName.MARKET: 2,
     CardName.COUNCILROOM: 1,
-    CardName.BANDIT: 2,
-    CardName.MILITIA: 2,
-    CardName.BUREAUCRAT: 2,
-    CardName.GARDENS: 2,
+    CardName.BANDIT: 1,
+    CardName.MILITIA: 1,
     CardName.ARTIFICER: 1,
     CardName.PORT: 2,
     CardName.FARMINGVILLAGE: 2,
@@ -166,6 +166,13 @@ def _try_action_buy(
     return None
 
 
+def _witch_in_kingdom(game: Game, mem: GameMemory) -> bool:
+    return (
+        stock_quantity(game.stock, CardName.WITCH) > 0
+        or bought_count(mem, CardName.WITCH) > 0
+    )
+
+
 def _prefer_attack(
     game: Game,
     mem: GameMemory,
@@ -224,7 +231,6 @@ def choose_buy(
             CardName.LABORATORY,
             CardName.FESTIVAL,
             CardName.MARKET,
-            CardName.COUNCILROOM,
             CardName.ARTIFICER,
         ):
             picked = _try_action_buy(game, mem, card, allow_actions=True)
@@ -232,32 +238,29 @@ def choose_buy(
                 return picked
 
     if money >= 4 and allow_actions:
-        for card in (CardName.MILITIA, CardName.BUREAUCRAT):
+        picked = _try_action_buy(game, mem, CardName.MILITIA, allow_actions=True)
+        if picked:
+            return picked
+        for card in (CardName.PORT, CardName.FARMINGVILLAGE, CardName.MAGPIE):
             picked = _try_action_buy(game, mem, card, allow_actions=True)
             if picked:
                 return picked
-        if provinces_left <= PROVINCES_LEFT_FOR_DUCHY:
-            picked = _try_action_buy(game, mem, CardName.GARDENS, allow_actions=True)
+        if _witch_in_kingdom(game, mem) and bought_count(mem, CardName.CHAPEL) == 0:
+            picked = _try_action_buy(
+                game, mem, CardName.MONEYLENDER, allow_actions=True
+            )
             if picked:
                 return picked
-        for card in (
-            CardName.PORT,
-            CardName.FARMINGVILLAGE,
-            CardName.MAGPIE,
-            CardName.SMITHY,
-            CardName.MONEYLENDER,
-        ):
+        for card in (CardName.SMITHY, CardName.MONEYLENDER):
             picked = _try_action_buy(game, mem, card, allow_actions=True)
             if picked:
                 return picked
 
-    if (
-        money >= 4
-        and provinces_left <= PROVINCES_LEFT_FOR_DUCHY
-        and under_cap(mem, CardName.GARDENS)
-        and can_buy(game, CardName.GARDENS)
-    ):
-        return CardName.GARDENS
+    # Chapelle à 2 ou 3 : on ne dépense pas une main à 4+ pour une carte à 2.
+    if money < 4 and _witch_in_kingdom(game, mem):
+        picked = _try_action_buy(game, mem, CardName.CHAPEL, allow_actions=allow_actions)
+        if picked:
+            return picked
 
     if money >= 3:
         picked = _try_action_buy(game, mem, CardName.VILLAGE, allow_actions=allow_actions)
@@ -422,8 +425,8 @@ def gain_score(card: CardName, mem: GameMemory) -> int:
         CardName.FESTIVAL: 138,
         CardName.MARKET: 136,
         CardName.MILITIA: 134,
-        CardName.BUREAUCRAT: 130,
-        CardName.COUNCILROOM: 128,
+        CardName.BUREAUCRAT: 40,
+        CardName.COUNCILROOM: 30,
         CardName.SMITHY: 120,
         CardName.PORT: 118,
         CardName.FARMINGVILLAGE: 116,
@@ -432,7 +435,7 @@ def gain_score(card: CardName, mem: GameMemory) -> int:
         CardName.DUCHY: 110 if late else 28,
         CardName.SILVER: 80,
         CardName.MONEYLENDER: 70,
-        CardName.GARDENS: 100 if late else 36,
+        CardName.GARDENS: 20,
         CardName.WOODCUTTER: 34,
         CardName.CHANCELLOR: 30,
         CardName.ESTATE: 24 if endgame else 4,

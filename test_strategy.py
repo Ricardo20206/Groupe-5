@@ -101,15 +101,51 @@ def main() -> None:
         CardName.MILITIA,
     )
     check(
-        "$4 bureaucrate si pas de milice",
+        "$4 port plutot que bureaucrate",
         choose_buy(make_game({}, stock={CardName.BUREAUCRAT: 10, CardName.PORT: 10}), 4, mem),
-        CardName.BUREAUCRAT,
+        CardName.PORT,
     )
     check(
-        "$4 p4 jardins plutot qu'argent",
+        "$4 p4 pas de jardins -> silver",
         choose_buy(make_game({}, provinces=4, stock={CardName.GARDENS: 10}), 4, mem),
-        CardName.GARDENS,
+        CardName.SILVER,
     )
+    check(
+        "$3 chapelle si sorciere",
+        choose_buy(
+            make_game({}, stock={CardName.WITCH: 10, CardName.CHAPEL: 10}),
+            3,
+            mem,
+        ),
+        CardName.CHAPEL,
+    )
+    check(
+        "$4 preteur avant forgeron sans chapelle",
+        choose_buy(
+            make_game(
+                {},
+                stock={
+                    CardName.WITCH: 10,
+                    CardName.MONEYLENDER: 10,
+                    CardName.SMITHY: 10,
+                },
+            ),
+            4,
+            mem,
+        ),
+        CardName.MONEYLENDER,
+    )
+    mem.bought[CardName.WITCH] = 1
+    check(
+        "$6 une seule sorciere puis or",
+        choose_buy(
+            make_game({}, stock={CardName.WITCH: 10, CardName.GOLD: 30}),
+            6,
+            mem,
+        ),
+        CardName.GOLD,
+    )
+    mem.bought.pop(CardName.WITCH, None)
 
     # Witch si malédictions
     g_w = make_game({}, stock={CardName.WITCH: 10, CardName.MARKET: 10})
