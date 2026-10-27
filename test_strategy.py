@@ -7,10 +7,17 @@ from dopynion.data_model import CardName, Cards, Game, Player
 from strategy import (
     choose_action,
     choose_buy,
+    choose_discard,
+    choose_gain,
+    choose_money_to_upgrade,
+    choose_trash,
+    confirm_discard,
+    confirm_trash,
     decide_play,
     end_game_state,
     init_game,
     reset_turn,
+    skip_reception,
     _memory,
 )
 
@@ -73,8 +80,36 @@ def main() -> None:
             CardName.DISTANTSHORE: 10,
         },
     )
-    check("$5 market", choose_buy(g_m, 5, mem), CardName.MARKET)
+    check("$5 bandit avant market", choose_buy(g_m, 5, mem), CardName.BANDIT)
     check("$4 port", choose_buy(g_m, 4, mem), CardName.PORT)
+    check(
+        "$6 witch avant or",
+        choose_buy(
+            make_game({}, stock={CardName.WITCH: 10, CardName.GOLD: 30}),
+            6,
+            mem,
+        ),
+        CardName.WITCH,
+    )
+    check(
+        "$4 milice avant port",
+        choose_buy(
+            make_game({}, stock={CardName.MILITIA: 10, CardName.PORT: 10}),
+            4,
+            mem,
+        ),
+        CardName.MILITIA,
+    )
+    check(
+        "$4 bureaucrate si pas de milice",
+        choose_buy(make_game({}, stock={CardName.BUREAUCRAT: 10, CardName.PORT: 10}), 4, mem),
+        CardName.BUREAUCRAT,
+    )
+    check(
+        "$4 p4 jardins plutot qu'argent",
+        choose_buy(make_game({}, provinces=4, stock={CardName.GARDENS: 10}), 4, mem),
+        CardName.GARDENS,
+    )
 
     # Witch si malédictions
     g_w = make_game({}, stock={CardName.WITCH: 10, CardName.MARKET: 10})
@@ -124,6 +159,43 @@ def main() -> None:
     # silver($2)+2 copper = $4 -> port (encore sous cap)
     check("BUY port", decide_play(gs, "t1"), "BUY port")
     check("END_TURN", decide_play(gs, "t1"), "END_TURN")
+
+    # Hooks : on ne jette jamais l'Or en premier, on prend l'attaque offerte
+    hand_attacked = [CardName.GOLD, CardName.CURSE, CardName.ESTATE, CardName.COPPER]
+    check("milice defausse malediction", choose_discard(hand_attacked), CardName.CURSE)
+    check("renovation ecarte malediction", choose_trash(hand_attacked, mem), CardName.CURSE)
+    check("chapelle ecarte cuivre", confirm_trash(CardName.COPPER, hand_attacked, mem), True)
+    check("chapelle garde or", confirm_trash(CardName.GOLD, hand_attacked, mem), False)
+    check("cave defausse domaine", confirm_discard(CardName.ESTATE, hand_attacked), True)
+    check("cave garde or", confirm_discard(CardName.GOLD, hand_attacked), False)
+    check(
+        "gain sorciere plutot que cuivre",
+        choose_gain([CardName.COPPER, CardName.WITCH, CardName.ESTATE], mem),
+        CardName.WITCH,
+    )
+    check(
+        "bibliotheque refuse malediction",
+        skip_reception(CardName.CURSE, [CardName.COPPER]),
+        True,
+    )
+    check(
+        "bibliotheque prend or",
+        skip_reception(CardName.GOLD, [CardName.COPPER]),
+        False,
+    )
+    check(
+        "mine ameliore argent avant or",
+        choose_money_to_upgrade([CardName.GOLD, CardName.COPPER, CardName.SILVER]),
+        CardName.SILVER,
+    )
+
+    # Sorcière jouée avant Bandit s'il reste des malédictions
+    attack_hand = Cards(quantities={CardName.WITCH: 1, CardName.BANDIT: 1, CardName.SMITHY: 1})
+    check(
+        "joue witch avant bandit",
+        choose_action(attack_hand, make_game({}, stock={CardName.CURSE: 10})),
+        CardName.WITCH,
+    )
 
     init_game("A")
     init_game("B")

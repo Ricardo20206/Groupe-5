@@ -1,11 +1,12 @@
 """
-Stratégie adaptative au kingdom + Big Money.
+Stratégie adaptative : Big Money + attaques.
 
 Lit le stock : n'achète / ne joue que des cartes réellement disponibles.
-Priorité économique : Province/Colony, Hireling, Platinum/Gold, puis les
-meilleures Actions présentes (Witch, Lab, Festival, Market, Port, Smithy…).
+Priorité : Province/Colonie, puis les attaques qui gênent (Sorcière, Bandit,
+Milice, Bureaucrate), Hireling, Or, puis le moteur (Labo, Festival, Marché…).
 
-Format : ``ACTION <card>`` / ``BUY <card>`` / ``END_TURN``.
+Les hooks de l'arbitre (défausse, écart, réception) choisissent toujours une
+carte de la liste reçue : on jette le rebut, on garde l'argent et les attaques.
 """
 
 from __future__ import annotations
@@ -34,13 +35,15 @@ CAPS: dict[CardName, int] = {
     CardName.FESTIVAL: 2,
     CardName.MARKET: 2,
     CardName.COUNCILROOM: 1,
-    CardName.BANDIT: 1,
+    CardName.BANDIT: 2,
+    CardName.MILITIA: 2,
+    CardName.BUREAUCRAT: 2,
+    CardName.GARDENS: 2,
     CardName.ARTIFICER: 1,
     CardName.PORT: 2,
     CardName.FARMINGVILLAGE: 2,
     CardName.MAGPIE: 2,
     CardName.SMITHY: 2,
-    CardName.MILITIA: 1,
     CardName.MONEYLENDER: 1,
     CardName.VILLAGE: 3,
     CardName.WOODCUTTER: 1,
@@ -61,6 +64,8 @@ class TurnState:
 class GameMemory:
     bought: dict[CardName, int] = field(default_factory=dict)
     turn: TurnState = field(default_factory=TurnState)
+    provinces_left: int = 12
+    curses_left: int = 20
 
 
 _games: dict[str, GameMemory] = {}
@@ -161,6 +166,19 @@ def _try_action_buy(
     return None
 
 
+def _prefer_attack(
+    game: Game,
+    mem: GameMemory,
+    curses_left: int,
+) -> CardName | None:
+    """Sorcière tant qu'il reste des Malédictions, sinon Bandit (Or + pillage)."""
+    if curses_left > 0:
+        picked = _try_action_buy(game, mem, CardName.WITCH, allow_actions=True)
+        if picked:
+            return picked
+    return _try_action_buy(game, mem, CardName.BANDIT, allow_actions=True)
+
+
 def choose_buy(
     game: Game,
     money: int,
@@ -180,12 +198,16 @@ def choose_buy(
     if money >= 9 and can_buy(game, CardName.PLATINUM):
         return CardName.PLATINUM
 
-    if money >= 6:
-        picked = _try_action_buy(game, mem, CardName.HIRELING, allow_actions=allow_actions)
+    if money >= 6 and allow_actions:
+        picked = _prefer_attack(game, mem, curses_left)
         if picked:
             return picked
-        if can_buy(game, CardName.GOLD):
-            return CardName.GOLD
+        picked = _try_action_buy(game, mem, CardName.HIRELING, allow_actions=True)
+        if picked:
+            return picked
+
+    if money >= 6 and can_buy(game, CardName.GOLD):
+        return CardName.GOLD
 
     if (
         money >= 5
@@ -194,39 +216,48 @@ def choose_buy(
     ):
         return CardName.DUCHY
 
-    if money >= 5:
-        if curses_left > 0:
-            picked = _try_action_buy(game, mem, CardName.WITCH, allow_actions=allow_actions)
-            if picked:
-                return picked
+    if money >= 5 and allow_actions:
+        picked = _prefer_attack(game, mem, curses_left)
+        if picked:
+            return picked
         for card in (
             CardName.LABORATORY,
             CardName.FESTIVAL,
             CardName.MARKET,
-            CardName.BANDIT,
             CardName.COUNCILROOM,
             CardName.ARTIFICER,
         ):
-            picked = _try_action_buy(game, mem, card, allow_actions=allow_actions)
+            picked = _try_action_buy(game, mem, card, allow_actions=True)
             if picked:
                 return picked
 
-    if money >= 4:
+    if money >= 4 and allow_actions:
+        for card in (CardName.MILITIA, CardName.BUREAUCRAT):
+            picked = _try_action_buy(game, mem, card, allow_actions=True)
+            if picked:
+                return picked
+        if provinces_left <= PROVINCES_LEFT_FOR_DUCHY:
+            picked = _try_action_buy(game, mem, CardName.GARDENS, allow_actions=True)
+            if picked:
+                return picked
         for card in (
             CardName.PORT,
             CardName.FARMINGVILLAGE,
             CardName.MAGPIE,
             CardName.SMITHY,
-            CardName.MILITIA,
+            CardName.MONEYLENDER,
         ):
-            picked = _try_action_buy(game, mem, card, allow_actions=allow_actions)
+            picked = _try_action_buy(game, mem, card, allow_actions=True)
             if picked:
                 return picked
-        picked = _try_action_buy(
-            game, mem, CardName.MONEYLENDER, allow_actions=allow_actions
-        )
-        if picked:
-            return picked
+
+    if (
+        money >= 4
+        and provinces_left <= PROVINCES_LEFT_FOR_DUCHY
+        and under_cap(mem, CardName.GARDENS)
+        and can_buy(game, CardName.GARDENS)
+    ):
+        return CardName.GARDENS
 
     if money >= 3:
         picked = _try_action_buy(game, mem, CardName.VILLAGE, allow_actions=allow_actions)
@@ -295,15 +326,20 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
         return None
 
     curses_left = stock_quantity(game.stock, CardName.CURSE)
+    attack_rank = {
+        CardName.WITCH: 4 if curses_left > 0 else 0,
+        CardName.BANDIT: 3,
+        CardName.MILITIA: 2,
+    }
 
     def terminal_score(item: tuple[CardName, type[Card]]) -> tuple:
         name, cls = item
-        witch_bonus = 1 if name == CardName.WITCH and curses_left > 0 else 0
         return (
-            witch_bonus,
+            attack_rank.get(name, 0),
             cls.more_cards_from_deck,
             cls.more_purchases,
             cls.more_money,
+            1 if name == CardName.BUREAUCRAT else 0,
         )
 
     terminals.sort(key=terminal_score, reverse=True)
@@ -328,8 +364,216 @@ def _consume_from_hand(hand: Cards, card: CardName) -> None:
         hand.quantities[card] = qty - 1
 
 
+# --- Décisions imposées par l'arbitre (hooks) ---------------------------------
+
+
+def _card_class(card: CardName) -> type[Card] | None:
+    return Card.types.get(card)
+
+
+def keep_value(card: CardName) -> int:
+    """Plus le score est haut, plus on garde la carte en main."""
+    if card == CardName.CURSE:
+        return -1000
+    cls = _card_class(card)
+    if cls is None:
+        return 0
+    if cls.is_action:
+        attack = {
+            CardName.WITCH: 8,
+            CardName.BANDIT: 7,
+            CardName.MILITIA: 6,
+            CardName.BUREAUCRAT: 3,
+        }.get(card, 0)
+        return (
+            20
+            + cls.more_cards_from_deck * 5
+            + cls.more_actions * 4
+            + cls.more_money * 3
+            + cls.more_purchases * 2
+            + attack
+        )
+    if cls.is_treasure:
+        if card == CardName.COPPER:
+            return 0
+        return 50 + cls.money * 10
+    if cls.is_victory:
+        return -100 + cls.victory_points
+    return 0
+
+
+def gain_score(card: CardName, mem: GameMemory) -> int:
+    """Plus le score est haut, plus on veut recevoir la carte."""
+    if card == CardName.CURSE:
+        return -1000
+    if card == CardName.WITCH and mem.curses_left <= 0:
+        return 15
+    late = mem.provinces_left <= PROVINCES_LEFT_FOR_DUCHY
+    endgame = mem.provinces_left <= PROVINCES_LEFT_FOR_ESTATE
+    ranked = {
+        CardName.COLONY: 200,
+        CardName.PROVINCE: 190,
+        CardName.PLATINUM: 170,
+        CardName.GOLD: 160,
+        CardName.WITCH: 155,
+        CardName.BANDIT: 150,
+        CardName.HIRELING: 145,
+        CardName.LABORATORY: 140,
+        CardName.FESTIVAL: 138,
+        CardName.MARKET: 136,
+        CardName.MILITIA: 134,
+        CardName.BUREAUCRAT: 130,
+        CardName.COUNCILROOM: 128,
+        CardName.SMITHY: 120,
+        CardName.PORT: 118,
+        CardName.FARMINGVILLAGE: 116,
+        CardName.MAGPIE: 112,
+        CardName.VILLAGE: 108,
+        CardName.DUCHY: 110 if late else 28,
+        CardName.SILVER: 80,
+        CardName.MONEYLENDER: 70,
+        CardName.GARDENS: 100 if late else 36,
+        CardName.WOODCUTTER: 34,
+        CardName.CHANCELLOR: 30,
+        CardName.ESTATE: 24 if endgame else 4,
+        CardName.COPPER: 1,
+    }
+    if card in ranked:
+        return ranked[card]
+    cls = _card_class(card)
+    if cls is None:
+        return 0
+    return (
+        cls.victory_points * 8
+        + cls.money * 10
+        + cls.more_cards_from_deck * 5
+        + cls.more_actions * 4
+        + cls.more_money * 3
+    )
+
+
+def _best_card(cards: list[CardName], score) -> CardName:
+    return max(cards, key=score)
+
+
+def confirm_discard(card: CardName, hand: list[CardName]) -> bool:
+    """Défausse volontaire (Cave, Artificier) : rebut, victoires mortes, Cuivre."""
+    del hand
+    return keep_value(card) < 10
+
+
+def confirm_trash(card: CardName, hand: list[CardName], mem: GameMemory) -> bool:
+    """Écart définitif : Malédiction, Cuivre, Domaine tôt, actions faibles."""
+    del hand
+    if card in (CardName.CURSE, CardName.COPPER):
+        return True
+    if card == CardName.ESTATE and mem.provinces_left > PROVINCES_LEFT_FOR_ESTATE:
+        return True
+    return card in (
+        CardName.CHANCELLOR,
+        CardName.WOODCUTTER,
+        CardName.CELLAR,
+        CardName.WORKSHOP,
+    )
+
+
+def choose_discard(hand: list[CardName]) -> CardName:
+    """Milice / Braconnier : on lâche d'abord la carte la moins utile."""
+    return min(hand, key=keep_value)
+
+
+def choose_trash(hand: list[CardName], mem: GameMemory) -> CardName:
+    """Rénovation (+2) et Renouvellement (+1) : améliorer un rebut, pas une Province.
+
+    Domaine et Argent montent vers une attaque ou un meilleur trésor dans les deux
+    cas. L'Or ne part que s'il n'y a rien de plus sûr (Rénovation peut viser la Province).
+    """
+    del mem
+
+    def trash_rank(card: CardName) -> int:
+        if card == CardName.CURSE:
+            return 0
+        if card == CardName.ESTATE:
+            return 1
+        if card == CardName.SILVER:
+            return 2
+        if card == CardName.COPPER:
+            return 3
+        if card == CardName.DUCHY:
+            return 4
+        if card == CardName.GARDENS:
+            return 5
+        if card in (
+            CardName.CHANCELLOR,
+            CardName.WOODCUTTER,
+            CardName.CELLAR,
+            CardName.WORKSHOP,
+        ):
+            return 6
+        if card == CardName.GOLD:
+            return 7
+        if card in (CardName.PROVINCE, CardName.COLONY):
+            return 100
+        return 50
+
+    return min(hand, key=trash_rank)
+
+
+def confirm_discard_deck() -> bool:
+    """Chancelier : défausser la pioche accélère le mélange."""
+    return True
+
+
+def choose_gain(cards: list[CardName], mem: GameMemory) -> CardName:
+    return _best_card(cards, lambda card: gain_score(card, mem))
+
+
+def skip_reception(card: CardName, hand: list[CardName]) -> bool:
+    """Bibliothèque : True = refuser la carte. On prend trésors et une action."""
+    if card == CardName.CURSE:
+        return True
+    cls = _card_class(card)
+    if cls is None:
+        return True
+    if cls.is_victory and not cls.is_action and not cls.is_treasure:
+        return True
+    if cls.is_treasure:
+        return False
+    if any(
+        (other := _card_class(name)) is not None and other.is_action for name in hand
+    ):
+        return True
+    return card in (
+        CardName.CHANCELLOR,
+        CardName.WOODCUTTER,
+        CardName.CELLAR,
+        CardName.WORKSHOP,
+    )
+
+
+def choose_money_to_upgrade(money_cards: list[CardName]) -> CardName:
+    """Mine : Argent→Or d'abord, puis Cuivre→Argent, Or en dernier."""
+    order = (
+        CardName.SILVER,
+        CardName.COPPER,
+        CardName.CURSEDGOLD,
+        CardName.GOLD,
+        CardName.PLATINUM,
+    )
+    for card in order:
+        if card in money_cards:
+            return card
+    return money_cards[0]
+
+
+def _remember_stock(mem: GameMemory, game: Game) -> None:
+    mem.provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
+    mem.curses_left = stock_quantity(game.stock, CardName.CURSE)
+
+
 def decide_play(game: Game, game_id: str) -> str:
     mem = _memory(game_id)
+    _remember_stock(mem, game)
     turn = mem.turn
 
     if turn.buy_phase and turn.purchases_left <= 0:

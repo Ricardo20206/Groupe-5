@@ -15,7 +15,22 @@ from fastapi import Depends, FastAPI, Header, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from strategy import PLAYER_NAME, decide_play, end_game_state, init_game, reset_turn
+from strategy import (
+    PLAYER_NAME,
+    choose_discard,
+    choose_gain,
+    choose_money_to_upgrade,
+    choose_trash,
+    confirm_discard,
+    confirm_discard_deck,
+    confirm_trash,
+    decide_play,
+    end_game_state,
+    init_game,
+    reset_turn,
+    skip_reception,
+    _memory,
+)
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
@@ -128,9 +143,10 @@ def end_game(game_id: GameIdDependency) -> DopynionResponseStr:
 @app.post("/confirm_discard_card_from_hand")
 async def confirm_discard_card_from_hand(
     game_id: GameIdDependency,
-    _decision_input: CardNameAndHand,
+    decision_input: CardNameAndHand,
 ) -> DopynionResponseBool:
-    return DopynionResponseBool(game_id=game_id, decision=True)
+    decision = confirm_discard(decision_input.card_name, decision_input.hand)
+    return DopynionResponseBool(game_id=game_id, decision=decision)
 
 
 @app.post("/discard_card_from_hand")
@@ -138,15 +154,21 @@ async def discard_card_from_hand(
     game_id: GameIdDependency,
     decision_input: Hand,
 ) -> DopynionResponseCardName:
-    return DopynionResponseCardName(game_id=game_id, decision=decision_input.hand[0])
+    decision = choose_discard(decision_input.hand)
+    return DopynionResponseCardName(game_id=game_id, decision=decision)
 
 
 @app.post("/confirm_trash_card_from_hand")
 async def confirm_trash_card_from_hand(
     game_id: GameIdDependency,
-    _decision_input: CardNameAndHand,
+    decision_input: CardNameAndHand,
 ) -> DopynionResponseBool:
-    return DopynionResponseBool(game_id=game_id, decision=True)
+    decision = confirm_trash(
+        decision_input.card_name,
+        decision_input.hand,
+        _memory(game_id),
+    )
+    return DopynionResponseBool(game_id=game_id, decision=decision)
 
 
 @app.post("/trash_card_from_hand")
@@ -154,14 +176,15 @@ async def trash_card_from_hand(
     game_id: GameIdDependency,
     decision_input: Hand,
 ) -> DopynionResponseCardName:
-    return DopynionResponseCardName(game_id=game_id, decision=decision_input.hand[0])
+    decision = choose_trash(decision_input.hand, _memory(game_id))
+    return DopynionResponseCardName(game_id=game_id, decision=decision)
 
 
 @app.post("/confirm_discard_deck")
-async def confirm_discard_deck(
+async def confirm_discard_deck_route(
     game_id: GameIdDependency,
 ) -> DopynionResponseBool:
-    return DopynionResponseBool(game_id=game_id, decision=True)
+    return DopynionResponseBool(game_id=game_id, decision=confirm_discard_deck())
 
 
 @app.post("/choose_card_to_receive_in_discard")
@@ -169,10 +192,8 @@ async def choose_card_to_receive_in_discard(
     game_id: GameIdDependency,
     decision_input: PossibleCards,
 ) -> DopynionResponseCardName:
-    return DopynionResponseCardName(
-        game_id=game_id,
-        decision=decision_input.possible_cards[0],
-    )
+    decision = choose_gain(decision_input.possible_cards, _memory(game_id))
+    return DopynionResponseCardName(game_id=game_id, decision=decision)
 
 
 @app.post("/choose_card_to_receive_in_deck")
@@ -180,18 +201,17 @@ async def choose_card_to_receive_in_deck(
     game_id: GameIdDependency,
     decision_input: PossibleCards,
 ) -> DopynionResponseCardName:
-    return DopynionResponseCardName(
-        game_id=game_id,
-        decision=decision_input.possible_cards[0],
-    )
+    decision = choose_gain(decision_input.possible_cards, _memory(game_id))
+    return DopynionResponseCardName(game_id=game_id, decision=decision)
 
 
 @app.post("/skip_card_reception_in_hand")
 async def skip_card_reception_in_hand(
     game_id: GameIdDependency,
-    _decision_input: CardNameAndHand,
+    decision_input: CardNameAndHand,
 ) -> DopynionResponseBool:
-    return DopynionResponseBool(game_id=game_id, decision=True)
+    decision = skip_reception(decision_input.card_name, decision_input.hand)
+    return DopynionResponseBool(game_id=game_id, decision=decision)
 
 
 @app.post("/trash_money_card_for_better_money_card")
@@ -199,7 +219,5 @@ async def trash_money_card_for_better_money_card(
     game_id: GameIdDependency,
     decision_input: MoneyCardsInHand,
 ) -> DopynionResponseCardName:
-    return DopynionResponseCardName(
-        game_id=game_id,
-        decision=decision_input.money_in_hand[0],
-    )
+    decision = choose_money_to_upgrade(decision_input.money_in_hand)
+    return DopynionResponseCardName(game_id=game_id, decision=decision)
