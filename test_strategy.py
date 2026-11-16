@@ -1,4 +1,4 @@
-"""Tests stratégie type 4ème Empire."""
+"""Tests stratégie adaptative top-Elo."""
 
 from __future__ import annotations
 
@@ -54,14 +54,20 @@ def make_game(
     )
 
 
-def empire_stock(**extra: int) -> dict[CardName, int]:
+def stock(**extra: int) -> dict[CardName, int]:
     base = {
         CardName.MILITIA: 10,
         CardName.WITCH: 10,
         CardName.FARMINGVILLAGE: 10,
         CardName.FESTIVAL: 10,
-        CardName.GARDENS: 12,
+        CardName.VILLAGE: 10,
+        CardName.LABORATORY: 10,
         CardName.SMITHY: 10,
+        CardName.BANDIT: 10,
+        CardName.HIRELING: 10,
+        CardName.CHAPEL: 10,
+        CardName.MARKET: 10,
+        CardName.GARDENS: 12,
     }
     base.update(extra)
     return base
@@ -81,107 +87,105 @@ def main() -> None:
     check("$6 gold", choose_buy(make_game({}), 6, mem), CardName.GOLD)
     check("$8 province", choose_buy(make_game({}), 8, mem), CardName.PROVINCE)
     check(
-        "$6 or pas witch",
-        choose_buy(make_game({}, stock=empire_stock()), 6, mem),
-        CardName.GOLD,
-    )
-    check(
-        "$5 witch prioritaire",
-        choose_buy(make_game({}, stock=empire_stock()), 5, mem),
+        "$5 witch",
+        choose_buy(make_game({}, stock=stock()), 5, mem),
         CardName.WITCH,
     )
     mem.bought[CardName.WITCH] = 2
     check(
-        "$5 apres 2 witch -> festival",
-        choose_buy(make_game({}, stock=empire_stock()), 5, mem),
+        "$5 apres witches -> festival",
+        choose_buy(make_game({}, stock=stock()), 5, mem),
         CardName.FESTIVAL,
     )
-    mem.bought[CardName.FESTIVAL] = 1
+    mem.bought.clear()
     check(
         "$4 militia",
-        choose_buy(make_game({}, stock=empire_stock()), 4, mem),
+        choose_buy(make_game({}, stock=stock()), 4, mem),
         CardName.MILITIA,
     )
     mem.bought[CardName.MILITIA] = 1
+    mem.bought[CardName.WITCH] = 1
     check(
-        "$4 apres militia -> farming village",
-        choose_buy(make_game({}, stock=empire_stock()), 4, mem),
+        "$4 village apres terminale",
+        choose_buy(make_game({}, stock=stock()), 4, mem),
         CardName.FARMINGVILLAGE,
     )
-    mem.bought[CardName.FARMINGVILLAGE] = 1
+
+    mem.bought.clear()
+    mem.bought[CardName.GOLD] = 1
     check(
-        "$4 moteur complet -> silver",
-        choose_buy(make_game({}, stock=empire_stock()), 4, mem),
-        CardName.SILVER,
+        "$6 hireling apres 1 or",
+        choose_buy(make_game({}, stock=stock()), 6, mem),
+        CardName.HIRELING,
     )
 
-    # Reset engine buys for greening tests
     mem.bought.clear()
     check(
-        "$5 p6 duchy prioritaire",
-        choose_buy(make_game({}, provinces=6, stock=empire_stock()), 5, mem),
+        "$5 p6 duchy",
+        choose_buy(make_game({}, provinces=6, stock=stock()), 5, mem),
         CardName.DUCHY,
     )
     check(
-        "$4 p6 gardens greening",
-        choose_buy(make_game({}, provinces=6, stock=empire_stock()), 4, mem),
+        "$4 p6 gardens",
+        choose_buy(make_game({}, provinces=6, stock=stock()), 4, mem),
         CardName.GARDENS,
     )
     check(
-        "$5 p5 duchy",
-        choose_buy(make_game({}, provinces=5, stock=empire_stock()), 5, mem),
-        CardName.DUCHY,
-    )
-    check(
-        "$4 p5 plus d'actions -> gardens",
-        choose_buy(make_game({}, provinces=5, stock=empire_stock()), 4, mem),
-        CardName.GARDENS,
-    )
-    check(
-        "$5 p7 duchy (4j)",
-        choose_buy(
-            make_game({}, provinces=7, stock=empire_stock(), n_players=4),
-            5,
-            mem,
-        ),
-        CardName.DUCHY,
+        "$2 chapel si witch kingdom",
+        choose_buy(make_game({}, stock=stock()), 2, mem),
+        CardName.CHAPEL,
     )
 
-    # Repli sans cartes Empire : smithy
+    # Smithy si pas de witch au kingdom
     mem.bought.clear()
     check(
-        "$4 smithy repli",
+        "$4 smithy sans witch pile",
         choose_buy(
-            make_game({}, stock={CardName.SMITHY: 10, CardName.CURSE: 0}),
+            make_game(
+                {},
+                stock={
+                    CardName.SMITHY: 10,
+                    CardName.MILITIA: 0,
+                    CardName.FARMINGVILLAGE: 0,
+                    CardName.PORT: 0,
+                    CardName.VILLAGE: 0,
+                    CardName.BUREAUCRAT: 0,
+                },
+            ),
             4,
             mem,
         ),
         CardName.SMITHY,
     )
 
+    chapel_hand = Cards(
+        quantities={CardName.CHAPEL: 1, CardName.COPPER: 2, CardName.WITCH: 1}
+    )
+    check(
+        "joue chapel avec copper",
+        choose_action(chapel_hand, make_game({}, stock=stock())),
+        CardName.CHAPEL,
+    )
+
     fv_hand = Cards(
         quantities={
-            CardName.FARMINGVILLAGE: 1,
             CardName.FESTIVAL: 1,
+            CardName.FARMINGVILLAGE: 1,
             CardName.WITCH: 1,
         }
     )
     check(
-        "joue festival (+buy/$) avant farming village",
-        choose_action(fv_hand, make_game({}, stock=empire_stock())),
+        "festival avant farming village",
+        choose_action(fv_hand, make_game({}, stock=stock())),
         CardName.FESTIVAL,
     )
-    attack_hand = Cards(quantities={CardName.WITCH: 1, CardName.MILITIA: 1})
     check(
-        "joue witch avant militia",
-        choose_action(attack_hand, make_game({}, stock={CardName.CURSE: 10})),
+        "witch avant militia",
+        choose_action(
+            Cards(quantities={CardName.WITCH: 1, CardName.MILITIA: 1}),
+            make_game({}, stock={CardName.CURSE: 10}),
+        ),
         CardName.WITCH,
-    )
-    militia_only = Cards(quantities={CardName.MILITIA: 1, CardName.SMITHY: 1})
-    check(
-        "joue militia avant smithy",
-        choose_action(militia_only, make_game({}, stock={CardName.CURSE: 0})),
-        CardName.MILITIA,
     )
 
     end_game_state("t1")
@@ -189,11 +193,21 @@ def main() -> None:
     reset_turn("t1")
     gs = make_game(
         {CardName.FESTIVAL: 1, CardName.GOLD: 1, CardName.COPPER: 2},
-        stock=empire_stock(),
+        stock=stock(),
     )
     check("ACTION festival", decide_play(gs, "t1"), "ACTION festival")
-    # gold 3 + 2 copper + festival $2 = 7 -> gold ; purchases_left=2
-    check("BUY gold apres festival", decide_play(gs, "t1"), "BUY gold")
+    check("BUY gold", decide_play(gs, "t1"), "BUY gold")
+
+    # Anti-crash : decide_play ne doit jamais lever
+    end_game_state("bad")
+    init_game("bad")
+    reset_turn("bad")
+    check(
+        "crash safe END_TURN",
+        decide_play(make_game({CardName.COPPER: 1}), "bad")
+        in ("END_TURN", "BUY silver", "BUY chapel"),
+        True,
+    )
 
     hand_attacked = [CardName.GOLD, CardName.CURSE, CardName.ESTATE, CardName.COPPER]
     check("defausse curse", choose_discard(hand_attacked), CardName.CURSE)

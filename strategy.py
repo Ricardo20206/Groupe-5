@@ -1,9 +1,16 @@
 """
-Stratégie calquée sur Le 4ème Empire.
+Stratégie adaptative visant le haut du classement.
 
-Ouverture : Argent → Milice → Sorcière×2 → Farming Village → Festival,
-puis Or / Provinces, greening Gardens + Duchés + Estates (achats extra Festival).
-Sans ces cartes au kingdom : repli Big Money (+ 1 Forgeron).
+Socle Big Money (Province / Or / Argent) + options selon le kingdom :
+- Sorcière×2 si Malédictions
+- Milice / Bandit en splash
+- Festival / Village / Farming Village / Port pour enchaîner les terminales
+- Labo / Forgeron / Market / Council Room en moteur léger
+- Hireling (1–2) à 6$
+- Chapelle si Sorcière au kingdom
+- Greening Duché / Gardens / Domaine en fin de partie
+
+Toute exception dans decide_play → END_TURN (évite les −10000).
 """
 
 from __future__ import annotations
@@ -22,14 +29,23 @@ PLAYER_NAME = os.environ.get("PLAYER_NAME", "Groupe 5")
 
 PROVINCES_LEFT_FOR_ESTATE = 2
 
-# Caps observés sur la partie Empire gagnante (64 VP).
 CAPS: dict[CardName, int] = {
-    CardName.MILITIA: 1,
     CardName.WITCH: 2,
-    CardName.FARMINGVILLAGE: 1,
-    CardName.FESTIVAL: 1,
-    CardName.GARDENS: 4,
+    CardName.MILITIA: 1,
+    CardName.BANDIT: 1,
+    CardName.FESTIVAL: 2,
+    CardName.VILLAGE: 2,
+    CardName.FARMINGVILLAGE: 2,
+    CardName.PORT: 2,
+    CardName.LABORATORY: 2,
     CardName.SMITHY: 1,
+    CardName.MARKET: 1,
+    CardName.COUNCILROOM: 1,
+    CardName.LIBRARY: 1,
+    CardName.HIRELING: 2,
+    CardName.CHAPEL: 1,
+    CardName.GARDENS: 4,
+    CardName.BUREAUCRAT: 1,
 }
 
 
@@ -118,6 +134,10 @@ def can_buy(game: Game, card_name: CardName) -> bool:
     return stock_quantity(game.stock, card_name) > 0
 
 
+def in_kingdom(game: Game, card_name: CardName) -> bool:
+    return card_name in game.stock.quantities
+
+
 def bought_count(mem: GameMemory, card_name: CardName) -> int:
     return mem.bought.get(card_name, 0)
 
@@ -130,12 +150,11 @@ def under_cap(mem: GameMemory, card_name: CardName) -> bool:
 
 
 def approx_deck_size(mem: GameMemory) -> int:
-    """Départ 10 cartes (7 Cuivre + 3 Domaines) + tout ce qu'on a acheté."""
     return 10 + sum(mem.bought.values())
 
 
 def greening_thresholds(n_players: int) -> tuple[int, int, int]:
-    """(duchy_at_or_below, gardens_at_or_below, stop_actions_at_or_below)."""
+    """(duchy_at, gardens_at, stop_actions_at)."""
     if n_players <= 2:
         return 6, 7, 5
     if n_players == 3:
@@ -143,52 +162,53 @@ def greening_thresholds(n_players: int) -> tuple[int, int, int]:
     return 7, 8, 6
 
 
-def actions_still_allowed(provinces_left: int, n_players: int = 2) -> bool:
-    _, _, stop_at = greening_thresholds(n_players)
-    return provinces_left > stop_at
+def village_count(mem: GameMemory) -> int:
+    return (
+        bought_count(mem, CardName.VILLAGE)
+        + bought_count(mem, CardName.FARMINGVILLAGE)
+        + bought_count(mem, CardName.PORT)
+        + bought_count(mem, CardName.FESTIVAL)
+    )
+
+
+def terminal_count(mem: GameMemory) -> int:
+    return (
+        bought_count(mem, CardName.WITCH)
+        + bought_count(mem, CardName.MILITIA)
+        + bought_count(mem, CardName.BANDIT)
+        + bought_count(mem, CardName.SMITHY)
+        + bought_count(mem, CardName.COUNCILROOM)
+        + bought_count(mem, CardName.LIBRARY)
+        + bought_count(mem, CardName.BUREAUCRAT)
+    )
+
+
+def need_villages(mem: GameMemory) -> bool:
+    return terminal_count(mem) >= 1 and village_count(mem) < max(1, terminal_count(mem))
+
+
+def _try(
+    game: Game,
+    mem: GameMemory,
+    card: CardName,
+    *,
+    allow: bool = True,
+) -> CardName | None:
+    if not allow:
+        return None
+    if under_cap(mem, card) and can_buy(game, card):
+        return card
+    return None
 
 
 def _want_gardens(mem: GameMemory, provinces_left: int, gardens_at: int) -> bool:
     if not under_cap(mem, CardName.GARDENS):
         return False
-    # Empire : Gardens dès que le deck commence à grossir / course VP.
     if provinces_left <= gardens_at:
         return True
-    if bought_count(mem, CardName.FESTIVAL) > 0 and approx_deck_size(mem) >= 18:
+    if village_count(mem) > 0 and approx_deck_size(mem) >= 20:
         return True
-    return approx_deck_size(mem) >= 25
-
-
-def _pick_engine(game: Game, money: int, mem: GameMemory, curses_left: int) -> CardName | None:
-    """Priorité Empire : Witch×2 → Festival → Militia → Farming Village → Smithy."""
-    if money >= 5:
-        if (
-            curses_left > 0
-            and under_cap(mem, CardName.WITCH)
-            and can_buy(game, CardName.WITCH)
-        ):
-            return CardName.WITCH
-        if under_cap(mem, CardName.FESTIVAL) and can_buy(game, CardName.FESTIVAL):
-            return CardName.FESTIVAL
-    if money >= 4:
-        if under_cap(mem, CardName.MILITIA) and can_buy(game, CardName.MILITIA):
-            return CardName.MILITIA
-        if (
-            under_cap(mem, CardName.FARMINGVILLAGE)
-            and can_buy(game, CardName.FARMINGVILLAGE)
-        ):
-            return CardName.FARMINGVILLAGE
-        # Repli BM : Forgeron seulement si ni Milice ni FV au kingdom.
-        no_militia = stock_quantity(game.stock, CardName.MILITIA) == 0
-        no_fv = stock_quantity(game.stock, CardName.FARMINGVILLAGE) == 0
-        if (
-            no_militia
-            and no_fv
-            and under_cap(mem, CardName.SMITHY)
-            and can_buy(game, CardName.SMITHY)
-        ):
-            return CardName.SMITHY
-    return None
+    return approx_deck_size(mem) >= 28
 
 
 def choose_buy(
@@ -197,7 +217,6 @@ def choose_buy(
     mem: GameMemory,
     hand: Cards | None = None,
 ) -> CardName | None:
-    """Empire : moteur + attaques, puis Or/Provinces, greening Gardens/Duchés."""
     del hand
     provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
     n_players = max(2, len(game.players))
@@ -207,29 +226,92 @@ def choose_buy(
     curses_left = stock_quantity(game.stock, CardName.CURSE)
     greening = provinces_left <= duchy_at
     want_gardens = _want_gardens(mem, provinces_left, gardens_at)
+    witch_board = in_kingdom(game, CardName.WITCH)
 
+    # --- Victoire / argent de haut niveau ---------------------------------
+    # Colonie seulement à 11$+ et pile présente : évite les achats foireux.
     if money >= 11 and can_buy(game, CardName.COLONY):
         return CardName.COLONY
     if money >= 8 and can_buy(game, CardName.PROVINCE):
         return CardName.PROVINCE
     if money >= 9 and can_buy(game, CardName.PLATINUM):
         return CardName.PLATINUM
-    if money >= 6 and can_buy(game, CardName.GOLD):
-        return CardName.GOLD
 
-    # Greening : Duché avant nouvelles actions (comme Empire en fin de partie).
+    if money >= 6:
+        # Hireling après le 1er Or : Empire le prend, utile en multi.
+        if (
+            allow_actions
+            and bought_count(mem, CardName.GOLD) >= 1
+            and (picked := _try(game, mem, CardName.HIRELING))
+        ):
+            return picked
+        if can_buy(game, CardName.GOLD):
+            return CardName.GOLD
+        if allow_actions and (picked := _try(game, mem, CardName.HIRELING)):
+            return picked
+
     if money >= 5 and greening and can_buy(game, CardName.DUCHY):
         return CardName.DUCHY
 
-    if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
-        # Gardens avant Silver dès que la course VP / deck le justifie.
-        if greening or money < 5 or not allow_actions:
-            return CardName.GARDENS
+    if money >= 4 and want_gardens and greening and can_buy(game, CardName.GARDENS):
+        return CardName.GARDENS
 
-    if allow_actions:
-        engine = _pick_engine(game, money, mem, curses_left)
-        if engine is not None:
-            return engine
+    # --- Actions mid-game -------------------------------------------------
+    if allow_actions and money >= 5:
+        if curses_left > 0 and (picked := _try(game, mem, CardName.WITCH)):
+            return picked
+        # Festival pour jouer Witch/Militia + +Buy (greening Gardens).
+        if terminal_count(mem) >= 1 or witch_board:
+            if picked := _try(game, mem, CardName.FESTIVAL):
+                return picked
+        if picked := _try(game, mem, CardName.LABORATORY):
+            return picked
+        if picked := _try(game, mem, CardName.MARKET):
+            return picked
+        if curses_left == 0 and (picked := _try(game, mem, CardName.BANDIT)):
+            return picked
+        if picked := _try(game, mem, CardName.COUNCILROOM):
+            return picked
+        if picked := _try(game, mem, CardName.LIBRARY):
+            return picked
+        if picked := _try(game, mem, CardName.FESTIVAL):
+            return picked
+        if picked := _try(game, mem, CardName.BANDIT):
+            return picked
+
+    if allow_actions and money >= 4:
+        if picked := _try(game, mem, CardName.MILITIA):
+            return picked
+        if need_villages(mem) or terminal_count(mem) >= 1:
+            for village in (
+                CardName.FARMINGVILLAGE,
+                CardName.PORT,
+                CardName.VILLAGE,
+            ):
+                if picked := _try(game, mem, village):
+                    return picked
+        # Smithy si pas de Witch (sinon Witch fait déjà +2 cards).
+        if bought_count(mem, CardName.WITCH) == 0:
+            if picked := _try(game, mem, CardName.SMITHY):
+                return picked
+        if picked := _try(game, mem, CardName.BUREAUCRAT):
+            return picked
+        if need_villages(mem):
+            for village in (
+                CardName.FARMINGVILLAGE,
+                CardName.PORT,
+                CardName.VILLAGE,
+            ):
+                if picked := _try(game, mem, village):
+                    return picked
+
+    if allow_actions and money >= 3:
+        if need_villages(mem) and (picked := _try(game, mem, CardName.VILLAGE)):
+            return picked
+
+    if allow_actions and money >= 2 and witch_board:
+        if picked := _try(game, mem, CardName.CHAPEL):
+            return picked
 
     if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
         return CardName.GARDENS
@@ -244,12 +326,11 @@ def choose_buy(
     ):
         return CardName.ESTATE
 
-    # Achats extra (Festival) : Domaine un peu plus tôt si $2–3 restants.
     if (
         money >= 2
         and money < 3
         and greening
-        and bought_count(mem, CardName.FESTIVAL) > 0
+        and village_count(mem) > 0
         and can_buy(game, CardName.ESTATE)
     ):
         return CardName.ESTATE
@@ -262,9 +343,18 @@ def _register_buy(mem: GameMemory, card: CardName) -> None:
 
 
 def choose_action(hand: Cards | None, game: Game) -> CardName | None:
-    """Village/Festival d'abord, puis Sorcière, Milice, reste."""
     if hand is None:
         return None
+
+    # Chapelle si rebut en main.
+    if hand_quantity(hand, CardName.CHAPEL) > 0:
+        junk = (
+            hand_quantity(hand, CardName.CURSE)
+            + hand_quantity(hand, CardName.COPPER)
+            + hand_quantity(hand, CardName.ESTATE)
+        )
+        if junk > 0:
+            return CardName.CHAPEL
 
     non_terminals: list[tuple[CardName, type[Card]]] = []
     terminals: list[tuple[CardName, type[Card]]] = []
@@ -277,21 +367,20 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
             continue
         if card_name == CardName.MONEYLENDER and hand_quantity(hand, CardName.COPPER) < 1:
             continue
+        if card_name == CardName.CHAPEL:
+            continue  # déjà géré ; sans rebut on ne la joue pas
         if card_cls.more_actions > 0:
             non_terminals.append((card_name, card_cls))
         else:
             terminals.append((card_name, card_cls))
 
     if non_terminals:
-        # Farming Village (+2) avant Festival (+2,+buy,+$) si les deux ;
-        # en pratique même more_actions → départager sur purchases puis money.
         non_terminals.sort(
             key=lambda item: (
                 item[1].more_actions,
                 item[1].more_purchases,
                 item[1].more_money,
                 item[1].more_cards_from_deck,
-                1 if item[0] == CardName.FARMINGVILLAGE else 0,
             ),
             reverse=True,
         )
@@ -305,9 +394,13 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
     def terminal_score(item: tuple[CardName, type[Card]]) -> tuple:
         name, cls = item
         if name == CardName.WITCH and curses_left > 0:
-            attack = 30
+            attack = 40
         elif name == CardName.MILITIA:
+            attack = 25
+        elif name == CardName.BANDIT:
             attack = 20
+        elif name == CardName.BUREAUCRAT:
+            attack = 12
         elif name == CardName.WITCH:
             attack = 5
         else:
@@ -356,12 +449,17 @@ def keep_value(card: CardName) -> int:
         return 0
     if cls.is_action:
         attack = {
-            CardName.WITCH: 10,
-            CardName.MILITIA: 9,
+            CardName.WITCH: 12,
+            CardName.MILITIA: 10,
+            CardName.BANDIT: 9,
             CardName.FESTIVAL: 8,
-            CardName.FARMINGVILLAGE: 8,
-            CardName.BANDIT: 7,
+            CardName.LABORATORY: 8,
+            CardName.HIRELING: 8,
+            CardName.FARMINGVILLAGE: 7,
+            CardName.PORT: 7,
+            CardName.VILLAGE: 6,
             CardName.SMITHY: 5,
+            CardName.CHAPEL: 4,
         }.get(card, 0)
         return (
             20
@@ -395,17 +493,24 @@ def gain_score(card: CardName, mem: GameMemory) -> int:
         CardName.PLATINUM: 170,
         CardName.GOLD: 160,
         CardName.WITCH: 155 if mem.curses_left > 0 else 25,
+        CardName.HIRELING: 150,
         CardName.FESTIVAL: 145,
+        CardName.LABORATORY: 142,
         CardName.MILITIA: 140,
-        CardName.FARMINGVILLAGE: 135,
+        CardName.BANDIT: 138,
+        CardName.MARKET: 130,
+        CardName.FARMINGVILLAGE: 128,
+        CardName.PORT: 126,
+        CardName.VILLAGE: 124,
         CardName.SMITHY: 120,
+        CardName.COUNCILROOM: 118,
         CardName.DUCHY: 110 if late else 28,
         CardName.GARDENS: 100 if gardens_time or approx_deck_size(mem) >= 20 else 40,
         CardName.SILVER: 80,
+        CardName.CHAPEL: 70,
         CardName.ESTATE: 24 if endgame else 4,
         CardName.COPPER: 1,
-        CardName.BUREAUCRAT: 10,
-        CardName.COUNCILROOM: 10,
+        CardName.BUREAUCRAT: 50,
     }
     if card in ranked:
         return ranked[card]
@@ -523,7 +628,7 @@ def _remember_stock(mem: GameMemory, game: Game) -> None:
     mem.n_players = max(2, len(game.players))
 
 
-def decide_play(game: Game, game_id: str) -> str:
+def _decide_play_inner(game: Game, game_id: str) -> str:
     mem = _memory(game_id)
     _remember_stock(mem, game)
     turn = mem.turn
@@ -563,6 +668,8 @@ def decide_play(game: Game, game_id: str) -> str:
         return "END_TURN"
 
     money = hand_money(player.hand) + turn.money_bonus - turn.money_spent
+    if money < 0:
+        money = 0
     card = choose_buy(game, money, mem, player.hand)
     if card is None:
         turn.purchases_left = 0
@@ -570,6 +677,18 @@ def decide_play(game: Game, game_id: str) -> str:
         return "END_TURN"
 
     cost = card_cost(card)
+    if cost > money or not can_buy(game, card):
+        # Sécurité : ne jamais proposer un achat invalide (élimination / −10000).
+        turn.purchases_left = 0
+        logger.warning(
+            "game=%s refus achat invalide card=%s cost=%s money=%s",
+            game_id,
+            card,
+            cost,
+            money,
+        )
+        return "END_TURN"
+
     turn.money_spent += cost
     turn.purchases_left -= 1
     _register_buy(mem, card)
@@ -584,3 +703,17 @@ def decide_play(game: Game, game_id: str) -> str:
         decision,
     )
     return decision
+
+
+def decide_play(game: Game, game_id: str) -> str:
+    try:
+        return _decide_play_inner(game, game_id)
+    except Exception:
+        logger.exception("game=%s decide_play crash -> END_TURN", game_id)
+        try:
+            mem = _memory(game_id)
+            mem.turn.purchases_left = 0
+            mem.turn.buy_phase = True
+        except Exception:
+            pass
+        return "END_TURN"
