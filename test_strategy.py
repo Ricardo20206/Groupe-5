@@ -126,13 +126,49 @@ def main() -> None:
     )
     mem.bought[CardName.SILVER] = 1
     check(
-        "$2 chapelle apres argent",
+        "$3 atelier apres argent",
         choose_buy(
-            make_game({}, stock={CardName.WITCH: 10, CardName.CHAPEL: 10}),
+            make_game({}, stock={CardName.WORKSHOP: 10, CardName.SMITHY: 10}),
+            3,
+            mem,
+        ),
+        CardName.WORKSHOP,
+    )
+    check(
+        "$2 chapelle apres argent (witch)",
+        choose_buy(
+            make_game({}, stock={CardName.WITCH: 10, CardName.CHAPEL: 10, CardName.CELLAR: 10}),
             2,
             mem,
         ),
         CardName.CHAPEL,
+    )
+    check(
+        "$2 cave hors plan witch",
+        choose_buy(
+            make_game({}, stock={CardName.CELLAR: 10, CardName.CHAPEL: 10}),
+            2,
+            mem,
+        ),
+        CardName.CELLAR,
+    )
+    check(
+        "$3 diseuse en plan attack",
+        choose_buy(
+            make_game({}, stock={CardName.FORTUNETELLER: 10, CardName.VILLAGE: 10}),
+            3,
+            mem,
+        ),
+        CardName.FORTUNETELLER,
+    )
+    check(
+        "$5 bibliotheque si pas de labo",
+        choose_buy(
+            make_game({}, stock={CardName.LIBRARY: 10, CardName.ARTIFICER: 10}),
+            5,
+            mem,
+        ),
+        CardName.LIBRARY,
     )
     mem.bought.pop(CardName.SILVER, None)
     check(

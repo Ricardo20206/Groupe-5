@@ -6,8 +6,9 @@ Stratégie adaptative : 3 plans selon le kingdom.
 - ENGINE : Labo / Festival / Marché / Port, presque zéro attaque
 - BIG_MONEY : Argent / Or / Province si le kingdom est pauvre
 
-Greening selon le nombre de joueurs (8 Provinces en 2j, 12 en 3–4j).
-Village/Port avant une 2e terminale. Pas de Chambre du conseil, Bureaucrate ni Jardin.
+Nouvelles cartes : Cave, Atelier, Diseuse, Bibliothèque, Magnat.
+Or toujours prioritaire à 6+. Pas d'Aventurier (pire que l'Or).
+Greening selon joueurs (8 Provinces en 2j). Village avant 2e terminale.
 """
 
 from __future__ import annotations
@@ -32,17 +33,22 @@ CAPS: dict[CardName, int] = {
     CardName.HIRELING: 3,
     CardName.WITCH: 2,
     CardName.CHAPEL: 1,
+    CardName.CELLAR: 1,
     CardName.LABORATORY: 2,
     CardName.FESTIVAL: 2,
     CardName.MARKET: 2,
+    CardName.LIBRARY: 1,
+    CardName.MAGNATE: 1,
     CardName.BANDIT: 1,
     CardName.MILITIA: 1,
+    CardName.FORTUNETELLER: 1,
     CardName.ARTIFICER: 1,
     CardName.PORT: 2,
     CardName.FARMINGVILLAGE: 2,
     CardName.MAGPIE: 2,
     CardName.SMITHY: 2,
     CardName.MONEYLENDER: 1,
+    CardName.WORKSHOP: 1,
     CardName.VILLAGE: 3,
     CardName.WOODCUTTER: 1,
     CardName.DISTANTSHORE: 1,
@@ -52,10 +58,14 @@ TERMINALS = frozenset({
     CardName.WITCH,
     CardName.BANDIT,
     CardName.MILITIA,
+    CardName.FORTUNETELLER,
     CardName.SMITHY,
     CardName.MONEYLENDER,
     CardName.WOODCUTTER,
     CardName.CHAPEL,
+    CardName.WORKSHOP,
+    CardName.LIBRARY,
+    CardName.MAGNATE,
 })
 
 ENGINES = frozenset({
@@ -66,6 +76,7 @@ ENGINES = frozenset({
     CardName.LABORATORY,
     CardName.FESTIVAL,
     CardName.MAGPIE,
+    CardName.CELLAR,
 })
 
 ENGINE_SIGNAL = (
@@ -270,6 +281,7 @@ def detect_plan(game: Game, mem: GameMemory) -> Plan:
     if (
         _present(game, mem, CardName.BANDIT)
         or _present(game, mem, CardName.MILITIA)
+        or _present(game, mem, CardName.FORTUNETELLER)
     ):
         return Plan.ATTACK
 
@@ -321,6 +333,7 @@ def _attack_bought(mem: GameMemory) -> int:
         bought_count(mem, CardName.BANDIT)
         + bought_count(mem, CardName.MILITIA)
         + bought_count(mem, CardName.WITCH)
+        + bought_count(mem, CardName.FORTUNETELLER)
     )
 
 
@@ -349,7 +362,10 @@ def _prefer_attack(
         picked = _try_action_buy(game, mem, CardName.BANDIT, allow_actions=True)
         if picked:
             return picked
-        return _try_action_buy(game, mem, CardName.MILITIA, allow_actions=True)
+        picked = _try_action_buy(game, mem, CardName.MILITIA, allow_actions=True)
+        if picked:
+            return picked
+        return _try_action_buy(game, mem, CardName.FORTUNETELLER, allow_actions=True)
 
     if mem.plan == Plan.WITCH and curses_left > 0:
         return None
@@ -414,6 +430,8 @@ def choose_buy(
             CardName.LABORATORY,
             CardName.FESTIVAL,
             CardName.MARKET,
+            CardName.LIBRARY,
+            CardName.MAGNATE,
             CardName.ARTIFICER,
         ):
             picked = _try_action_buy(game, mem, card, allow_actions=True)
@@ -453,10 +471,21 @@ def choose_buy(
                 return picked
 
     if money >= 3:
-        # Économie d'abord : 1 Argent minimum avant Chapelle / Village de luxe
+        # Économie d'abord : 1 Argent minimum avant Atelier / Village
         if bought_count(mem, CardName.SILVER) + bought_count(mem, CardName.GOLD) < 1:
             if can_buy(game, CardName.SILVER):
                 return CardName.SILVER
+        if allow_actions and mem.plan == Plan.ATTACK and not _needs_engine(mem):
+            picked = _try_action_buy(
+                game, mem, CardName.FORTUNETELLER, allow_actions=True
+            )
+            if picked and _attack_bought(mem) < 1:
+                return picked
+        # Atelier : gagne Forgeron / Milice / Pie à 4 sans payer 4
+        if allow_actions and bought_count(mem, CardName.WORKSHOP) == 0:
+            picked = _try_action_buy(game, mem, CardName.WORKSHOP, allow_actions=True)
+            if picked:
+                return picked
         if allow_actions and (_needs_engine(mem) or mem.plan in (Plan.ENGINE, Plan.WITCH)):
             picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
             if picked:
@@ -473,15 +502,19 @@ def choose_buy(
         if can_buy(game, CardName.SILVER):
             return CardName.SILVER
 
-    # Chapelle à 2 seulement (pas à 3 à la place d'un Argent)
-    if (
-        money == 2
-        and mem.plan == Plan.WITCH
-        and allow_actions
-    ):
-        picked = _try_action_buy(game, mem, CardName.CHAPEL, allow_actions=True)
+    # Cave / Chapelle à 2 : filtre le deck sans bloquer l'Argent à 3
+    if money == 2 and allow_actions:
+        if mem.plan == Plan.WITCH:
+            picked = _try_action_buy(game, mem, CardName.CHAPEL, allow_actions=True)
+            if picked:
+                return picked
+        picked = _try_action_buy(game, mem, CardName.CELLAR, allow_actions=True)
         if picked:
             return picked
+        if mem.plan != Plan.WITCH:
+            picked = _try_action_buy(game, mem, CardName.CHAPEL, allow_actions=True)
+            if picked:
+                return picked
 
     if (
         money >= 2
@@ -573,6 +606,10 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
         CardName.WITCH: 4 if curses_left > 0 else 0,
         CardName.BANDIT: 3,
         CardName.MILITIA: 2,
+        CardName.FORTUNETELLER: 1,
+        CardName.LIBRARY: 2,
+        CardName.MAGNATE: 1,
+        CardName.WORKSHOP: 1,
     }
 
     def terminal_score(item: tuple[CardName, type[Card]]) -> tuple:
@@ -667,7 +704,10 @@ def gain_score(card: CardName, mem: GameMemory) -> int:
         CardName.LABORATORY: 140 + engine_bias,
         CardName.FESTIVAL: 138 + engine_bias,
         CardName.MARKET: 136 + engine_bias,
+        CardName.LIBRARY: 132 + engine_bias,
+        CardName.MAGNATE: 125 + engine_bias // 2,
         CardName.MILITIA: 134 if mem.plan == Plan.ATTACK else 50,
+        CardName.FORTUNETELLER: 90 if mem.plan == Plan.ATTACK else 35,
         CardName.BUREAUCRAT: 40,
         CardName.COUNCILROOM: 30,
         CardName.SMITHY: 120 + engine_bias // 2,
@@ -675,6 +715,8 @@ def gain_score(card: CardName, mem: GameMemory) -> int:
         CardName.FARMINGVILLAGE: 116 + engine_bias,
         CardName.MAGPIE: 112 + engine_bias,
         CardName.VILLAGE: 108 + engine_bias + witch_bias // 2,
+        CardName.WORKSHOP: 95,
+        CardName.CELLAR: 85,
         CardName.CHAPEL: 100 if mem.plan == Plan.WITCH else 20,
         CardName.DUCHY: 110 if late else 28,
         CardName.SILVER: 80,
