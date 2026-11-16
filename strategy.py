@@ -387,28 +387,16 @@ def choose_buy(
     if high is not None:
         return high
 
-    # Plan ENGINE : moteur avant attaque / Or
+    # $6+ : Or d'abord. Contre les tops Big Money, Sorcière/Recrue à 6 font perdre.
+    if money >= 6 and can_buy(game, CardName.GOLD):
+        return CardName.GOLD
+
+    # Plan ENGINE : moteur à 5, jamais à la place d'un Or
     if mem.plan == Plan.ENGINE and money >= 5 and allow_actions:
         if _needs_engine(mem) or _engine_bought(mem) < 2:
             picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
             if picked:
                 return picked
-
-    if money >= 6 and allow_actions:
-        if _needs_engine(mem):
-            picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
-            if picked:
-                return picked
-        if mem.plan != Plan.ENGINE:
-            picked = _prefer_attack(game, mem, curses_left)
-            if picked:
-                return picked
-        picked = _try_action_buy(game, mem, CardName.HIRELING, allow_actions=True)
-        if picked:
-            return picked
-
-    if money >= 6 and can_buy(game, CardName.GOLD):
-        return CardName.GOLD
 
     if money >= 5 and provinces_left <= duchy_at and can_buy(game, CardName.DUCHY):
         return CardName.DUCHY
@@ -464,17 +452,11 @@ def choose_buy(
             if picked:
                 return picked
 
-    # Chapelle tôt uniquement en plan Sorcière
-    if (
-        money < 4
-        and mem.plan == Plan.WITCH
-        and allow_actions
-    ):
-        picked = _try_action_buy(game, mem, CardName.CHAPEL, allow_actions=True)
-        if picked:
-            return picked
-
     if money >= 3:
+        # Économie d'abord : 1 Argent minimum avant Chapelle / Village de luxe
+        if bought_count(mem, CardName.SILVER) + bought_count(mem, CardName.GOLD) < 1:
+            if can_buy(game, CardName.SILVER):
+                return CardName.SILVER
         if allow_actions and (_needs_engine(mem) or mem.plan in (Plan.ENGINE, Plan.WITCH)):
             picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
             if picked:
@@ -490,6 +472,16 @@ def choose_buy(
                 return picked
         if can_buy(game, CardName.SILVER):
             return CardName.SILVER
+
+    # Chapelle à 2 seulement (pas à 3 à la place d'un Argent)
+    if (
+        money == 2
+        and mem.plan == Plan.WITCH
+        and allow_actions
+    ):
+        picked = _try_action_buy(game, mem, CardName.CHAPEL, allow_actions=True)
+        if picked:
+            return picked
 
     if (
         money >= 2

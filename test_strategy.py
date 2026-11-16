@@ -72,9 +72,9 @@ def main() -> None:
     check("$6 BM gold", choose_buy(g_bm, 6, mem), CardName.GOLD)
     check("$8 BM province", choose_buy(g_bm, 8, mem), CardName.PROVINCE)
 
-    # Kingdom avec Hireling
+    # $6 : Or avant Recrue / Sorcière
     g_h = make_game({}, stock={CardName.HIRELING: 10})
-    check("$6 hireling", choose_buy(g_h, 6, mem), CardName.HIRELING)
+    check("$6 or avant hireling", choose_buy(g_h, 6, mem), CardName.GOLD)
 
     # Plan ENGINE : market/port/magpie (+ bandit ignoré)
     g_m = make_game(
@@ -98,23 +98,43 @@ def main() -> None:
         Plan.WITCH,
     )
     check(
-        "$6 witch avant or",
+        "$6 or avant witch",
         choose_buy(
             make_game({}, stock={CardName.WITCH: 10, CardName.GOLD: 30}),
             6,
             mem,
         ),
+        CardName.GOLD,
+    )
+    check(
+        "$5 witch encore prioritaire",
+        choose_buy(
+            make_game({}, stock={CardName.WITCH: 10, CardName.MARKET: 10}),
+            5,
+            mem,
+        ),
         CardName.WITCH,
     )
     check(
-        "$3 chapelle si sorciere",
+        "$3 argent avant chapelle",
         choose_buy(
             make_game({}, stock={CardName.WITCH: 10, CardName.CHAPEL: 10}),
             3,
             mem,
         ),
+        CardName.SILVER,
+    )
+    mem.bought[CardName.SILVER] = 1
+    check(
+        "$2 chapelle apres argent",
+        choose_buy(
+            make_game({}, stock={CardName.WITCH: 10, CardName.CHAPEL: 10}),
+            2,
+            mem,
+        ),
         CardName.CHAPEL,
     )
+    mem.bought.pop(CardName.SILVER, None)
     check(
         "$4 preteur avant forgeron sans chapelle",
         choose_buy(
