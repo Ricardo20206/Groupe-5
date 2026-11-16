@@ -1,10 +1,9 @@
 """
-Big Money dur.
+Stratégie calquée sur Le 4ème Empire.
 
-Priorité : Province / Colonie / Platine / Or / Argent.
-Options : 1 Sorcière à 5$ s'il reste des Malédictions, 1 Forgeron max.
-Greening selon le nombre de joueurs (8 Provinces en 2j, 12 en 3–4j).
-Les hooks de l'arbitre restent stratégiques (défausse / écart / gain).
+Ouverture : Argent → Milice → Sorcière×2 → Farming Village → Festival,
+puis Or / Provinces, greening Gardens + Duchés + Estates (achats extra Festival).
+Sans ces cartes au kingdom : repli Big Money (+ 1 Forgeron).
 """
 
 from __future__ import annotations
@@ -23,8 +22,13 @@ PLAYER_NAME = os.environ.get("PLAYER_NAME", "Groupe 5")
 
 PROVINCES_LEFT_FOR_ESTATE = 2
 
+# Caps observés sur la partie Empire gagnante (64 VP).
 CAPS: dict[CardName, int] = {
-    CardName.WITCH: 1,
+    CardName.MILITIA: 1,
+    CardName.WITCH: 2,
+    CardName.FARMINGVILLAGE: 1,
+    CardName.FESTIVAL: 1,
+    CardName.GARDENS: 4,
     CardName.SMITHY: 1,
 }
 
@@ -125,18 +129,66 @@ def under_cap(mem: GameMemory, card_name: CardName) -> bool:
     return bought_count(mem, card_name) < cap
 
 
-def greening_thresholds(n_players: int) -> tuple[int, int]:
-    """(duchy_at_or_below, stop_actions_at_or_below)."""
+def approx_deck_size(mem: GameMemory) -> int:
+    """Départ 10 cartes (7 Cuivre + 3 Domaines) + tout ce qu'on a acheté."""
+    return 10 + sum(mem.bought.values())
+
+
+def greening_thresholds(n_players: int) -> tuple[int, int, int]:
+    """(duchy_at_or_below, gardens_at_or_below, stop_actions_at_or_below)."""
     if n_players <= 2:
-        return 6, 5
+        return 6, 7, 5
     if n_players == 3:
-        return 6, 5
-    return 7, 6
+        return 6, 7, 5
+    return 7, 8, 6
 
 
 def actions_still_allowed(provinces_left: int, n_players: int = 2) -> bool:
-    _, stop_at = greening_thresholds(n_players)
+    _, _, stop_at = greening_thresholds(n_players)
     return provinces_left > stop_at
+
+
+def _want_gardens(mem: GameMemory, provinces_left: int, gardens_at: int) -> bool:
+    if not under_cap(mem, CardName.GARDENS):
+        return False
+    # Empire : Gardens dès que le deck commence à grossir / course VP.
+    if provinces_left <= gardens_at:
+        return True
+    if bought_count(mem, CardName.FESTIVAL) > 0 and approx_deck_size(mem) >= 18:
+        return True
+    return approx_deck_size(mem) >= 25
+
+
+def _pick_engine(game: Game, money: int, mem: GameMemory, curses_left: int) -> CardName | None:
+    """Priorité Empire : Witch×2 → Festival → Militia → Farming Village → Smithy."""
+    if money >= 5:
+        if (
+            curses_left > 0
+            and under_cap(mem, CardName.WITCH)
+            and can_buy(game, CardName.WITCH)
+        ):
+            return CardName.WITCH
+        if under_cap(mem, CardName.FESTIVAL) and can_buy(game, CardName.FESTIVAL):
+            return CardName.FESTIVAL
+    if money >= 4:
+        if under_cap(mem, CardName.MILITIA) and can_buy(game, CardName.MILITIA):
+            return CardName.MILITIA
+        if (
+            under_cap(mem, CardName.FARMINGVILLAGE)
+            and can_buy(game, CardName.FARMINGVILLAGE)
+        ):
+            return CardName.FARMINGVILLAGE
+        # Repli BM : Forgeron seulement si ni Milice ni FV au kingdom.
+        no_militia = stock_quantity(game.stock, CardName.MILITIA) == 0
+        no_fv = stock_quantity(game.stock, CardName.FARMINGVILLAGE) == 0
+        if (
+            no_militia
+            and no_fv
+            and under_cap(mem, CardName.SMITHY)
+            and can_buy(game, CardName.SMITHY)
+        ):
+            return CardName.SMITHY
+    return None
 
 
 def choose_buy(
@@ -145,14 +197,16 @@ def choose_buy(
     mem: GameMemory,
     hand: Cards | None = None,
 ) -> CardName | None:
-    """Big Money : Province, Or, Duché, Sorcière/Forgeron, Argent."""
+    """Empire : moteur + attaques, puis Or/Provinces, greening Gardens/Duchés."""
     del hand
     provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
     n_players = max(2, len(game.players))
     mem.n_players = n_players
-    duchy_at, stop_at = greening_thresholds(n_players)
+    duchy_at, gardens_at, stop_at = greening_thresholds(n_players)
     allow_actions = provinces_left > stop_at
     curses_left = stock_quantity(game.stock, CardName.CURSE)
+    greening = provinces_left <= duchy_at
+    want_gardens = _want_gardens(mem, provinces_left, gardens_at)
 
     if money >= 11 and can_buy(game, CardName.COLONY):
         return CardName.COLONY
@@ -163,18 +217,22 @@ def choose_buy(
     if money >= 6 and can_buy(game, CardName.GOLD):
         return CardName.GOLD
 
-    if money >= 5 and provinces_left <= duchy_at and can_buy(game, CardName.DUCHY):
+    # Greening : Duché avant nouvelles actions (comme Empire en fin de partie).
+    if money >= 5 and greening and can_buy(game, CardName.DUCHY):
         return CardName.DUCHY
 
-    if money >= 5 and allow_actions:
-        if (
-            curses_left > 0
-            and under_cap(mem, CardName.WITCH)
-            and can_buy(game, CardName.WITCH)
-        ):
-            return CardName.WITCH
-        if under_cap(mem, CardName.SMITHY) and can_buy(game, CardName.SMITHY):
-            return CardName.SMITHY
+    if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
+        # Gardens avant Silver dès que la course VP / deck le justifie.
+        if greening or money < 5 or not allow_actions:
+            return CardName.GARDENS
+
+    if allow_actions:
+        engine = _pick_engine(game, money, mem, curses_left)
+        if engine is not None:
+            return engine
+
+    if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
+        return CardName.GARDENS
 
     if money >= 3 and can_buy(game, CardName.SILVER):
         return CardName.SILVER
@@ -182,6 +240,16 @@ def choose_buy(
     if (
         money >= 2
         and provinces_left <= PROVINCES_LEFT_FOR_ESTATE
+        and can_buy(game, CardName.ESTATE)
+    ):
+        return CardName.ESTATE
+
+    # Achats extra (Festival) : Domaine un peu plus tôt si $2–3 restants.
+    if (
+        money >= 2
+        and money < 3
+        and greening
+        and bought_count(mem, CardName.FESTIVAL) > 0
         and can_buy(game, CardName.ESTATE)
     ):
         return CardName.ESTATE
@@ -194,7 +262,7 @@ def _register_buy(mem: GameMemory, card: CardName) -> None:
 
 
 def choose_action(hand: Cards | None, game: Game) -> CardName | None:
-    """Joue +Actions, puis Sorcière / Forgeron / reste."""
+    """Village/Festival d'abord, puis Sorcière, Milice, reste."""
     if hand is None:
         return None
 
@@ -215,12 +283,15 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
             terminals.append((card_name, card_cls))
 
     if non_terminals:
+        # Farming Village (+2) avant Festival (+2,+buy,+$) si les deux ;
+        # en pratique même more_actions → départager sur purchases puis money.
         non_terminals.sort(
             key=lambda item: (
                 item[1].more_actions,
-                item[1].more_cards_from_deck,
                 item[1].more_purchases,
                 item[1].more_money,
+                item[1].more_cards_from_deck,
+                1 if item[0] == CardName.FARMINGVILLAGE else 0,
             ),
             reverse=True,
         )
@@ -233,9 +304,16 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
 
     def terminal_score(item: tuple[CardName, type[Card]]) -> tuple:
         name, cls = item
-        witch_bonus = 1 if name == CardName.WITCH and curses_left > 0 else 0
+        if name == CardName.WITCH and curses_left > 0:
+            attack = 30
+        elif name == CardName.MILITIA:
+            attack = 20
+        elif name == CardName.WITCH:
+            attack = 5
+        else:
+            attack = 0
         return (
-            witch_bonus,
+            attack,
             cls.more_cards_from_deck,
             cls.more_purchases,
             cls.more_money,
@@ -278,9 +356,11 @@ def keep_value(card: CardName) -> int:
         return 0
     if cls.is_action:
         attack = {
-            CardName.WITCH: 8,
+            CardName.WITCH: 10,
+            CardName.MILITIA: 9,
+            CardName.FESTIVAL: 8,
+            CardName.FARMINGVILLAGE: 8,
             CardName.BANDIT: 7,
-            CardName.MILITIA: 6,
             CardName.SMITHY: 5,
         }.get(card, 0)
         return (
@@ -296,6 +376,8 @@ def keep_value(card: CardName) -> int:
             return 0
         return 50 + cls.money * 10
     if cls.is_victory:
+        if card == CardName.GARDENS:
+            return -40
         return -100 + cls.victory_points
     return 0
 
@@ -303,21 +385,25 @@ def keep_value(card: CardName) -> int:
 def gain_score(card: CardName, mem: GameMemory) -> int:
     if card == CardName.CURSE:
         return -1000
-    duchy_at, _ = greening_thresholds(mem.n_players)
+    duchy_at, gardens_at, _ = greening_thresholds(mem.n_players)
     late = mem.provinces_left <= duchy_at
+    gardens_time = mem.provinces_left <= gardens_at
     endgame = mem.provinces_left <= PROVINCES_LEFT_FOR_ESTATE
     ranked = {
         CardName.COLONY: 200,
         CardName.PROVINCE: 190,
         CardName.PLATINUM: 170,
         CardName.GOLD: 160,
-        CardName.WITCH: 150 if mem.curses_left > 0 else 20,
+        CardName.WITCH: 155 if mem.curses_left > 0 else 25,
+        CardName.FESTIVAL: 145,
+        CardName.MILITIA: 140,
+        CardName.FARMINGVILLAGE: 135,
         CardName.SMITHY: 120,
         CardName.DUCHY: 110 if late else 28,
+        CardName.GARDENS: 100 if gardens_time or approx_deck_size(mem) >= 20 else 40,
         CardName.SILVER: 80,
         CardName.ESTATE: 24 if endgame else 4,
         CardName.COPPER: 1,
-        CardName.GARDENS: 15,
         CardName.BUREAUCRAT: 10,
         CardName.COUNCILROOM: 10,
     }
@@ -376,6 +462,8 @@ def choose_trash(hand: list[CardName], mem: GameMemory) -> CardName:
             return 3
         if card == CardName.DUCHY:
             return 4
+        if card == CardName.GARDENS:
+            return 5
         if card == CardName.GOLD:
             return 7
         if card in (CardName.PROVINCE, CardName.COLONY):
