@@ -6,8 +6,8 @@ Stratégie adaptative : 3 plans selon le kingdom.
 - ENGINE : Labo / Festival / Marché / Port, presque zéro attaque
 - BIG_MONEY : Argent / Or / Province si le kingdom est pauvre
 
-Greening selon le nombre de joueurs. Village/Port avant une 2e terminale.
-Pas de Chambre du conseil, Bureaucrate ni Jardin.
+Greening selon le nombre de joueurs (8 Provinces en 2j, 12 en 3–4j).
+Village/Port avant une 2e terminale. Pas de Chambre du conseil, Bureaucrate ni Jardin.
 """
 
 from __future__ import annotations
@@ -186,10 +186,11 @@ def under_cap(mem: GameMemory, card_name: CardName) -> bool:
 def greening_thresholds(n_players: int) -> tuple[int, int]:
     """(duchy_at_or_below, stop_actions_at_or_below).
 
-    2 joueurs : greening plus tard. 3–4 joueurs : plus tôt (Provinces partent vite).
+    2 joueurs : pile de 8 Provinces → fin rapide, greening agressif.
+    3–4 joueurs : pile de 12 → greening selon la vitesse de la table.
     """
     if n_players <= 2:
-        return 5, 4
+        return 6, 5
     if n_players == 3:
         return 6, 5
     return 7, 6

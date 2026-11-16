@@ -197,15 +197,15 @@ def main() -> None:
     )
     check("$5 sans curse -> market", choose_buy(g_nocurse, 5, mem), CardName.MARKET)
 
-    # Greening : 2 joueurs = duché à <=5, stop actions à <=4
+    # Greening : 2 joueurs = 8 Provinces → duché à <=6, stop actions à <=5
     check(
-        "$5 p5 duchy (2j)",
-        choose_buy(make_game({}, provinces=5, stock={CardName.MARKET: 10}), 5, mem),
+        "$5 p6 duchy (2j, pile 8)",
+        choose_buy(make_game({}, provinces=6, stock={CardName.MARKET: 10}), 5, mem),
         CardName.DUCHY,
     )
     check(
-        "$4 p4 stop actions -> silver (2j)",
-        choose_buy(make_game({}, provinces=4, stock={CardName.PORT: 10}), 4, mem),
+        "$4 p5 stop actions -> silver (2j)",
+        choose_buy(make_game({}, provinces=5, stock={CardName.PORT: 10}), 4, mem),
         CardName.SILVER,
     )
     # 4 joueurs : duché dès 7 Provinces, stop actions à 6
