@@ -1,13 +1,13 @@
 """
-Stratégie adaptative : Big Money + attaques.
+Stratégie adaptative : 3 plans selon le kingdom.
 
-Lit le stock : n'achète / ne joue que des cartes réellement disponibles.
-Priorité : Province/Colonie, Sorcière (+2e si Village), Bandit, Milice, Or.
-Village/Port avant une 2e terminale. Chapelle jouée dès qu'il y a du rebut.
-Greening dès 6 Provinces. Pas de Chambre du conseil, Bureaucrate ni Jardin.
+- WITCH : Chapelle → Village → Sorcière(s) → Or → Provinces
+- ATTACK : 1 Bandit ou 1 Milice max, beaucoup d'Or, greening agressif
+- ENGINE : Labo / Festival / Marché / Port, presque zéro attaque
+- BIG_MONEY : Argent / Or / Province si le kingdom est pauvre
 
-Les hooks de l'arbitre (défausse, écart, réception) choisissent toujours une
-carte de la liste reçue : on jette le rebut, on garde l'argent et les attaques.
+Greening selon le nombre de joueurs. Village/Port avant une 2e terminale.
+Pas de Chambre du conseil, Bureaucrate ni Jardin.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from dopynion.cards import Card
 from dopynion.data_model import CardName, Cards, Game, Player
@@ -24,9 +25,7 @@ logger = logging.getLogger("strategy")
 
 PLAYER_NAME = os.environ.get("PLAYER_NAME", "Groupe 5")
 
-PROVINCES_LEFT_FOR_DUCHY = 6
 PROVINCES_LEFT_FOR_ESTATE = 2
-PROVINCES_STOP_ACTIONS = 6
 
 # Caps par type (évite d'asphyxier le deck)
 CAPS: dict[CardName, int] = {
@@ -69,6 +68,23 @@ ENGINES = frozenset({
     CardName.MAGPIE,
 })
 
+ENGINE_SIGNAL = (
+    CardName.LABORATORY,
+    CardName.FESTIVAL,
+    CardName.MARKET,
+    CardName.PORT,
+    CardName.FARMINGVILLAGE,
+    CardName.VILLAGE,
+    CardName.MAGPIE,
+)
+
+
+class Plan(StrEnum):
+    WITCH = "witch"
+    ATTACK = "attack"
+    ENGINE = "engine"
+    BIG_MONEY = "big_money"
+
 
 @dataclass
 class TurnState:
@@ -85,6 +101,8 @@ class GameMemory:
     turn: TurnState = field(default_factory=TurnState)
     provinces_left: int = 12
     curses_left: int = 20
+    n_players: int = 2
+    plan: Plan = Plan.BIG_MONEY
 
 
 _games: dict[str, GameMemory] = {}
@@ -165,8 +183,21 @@ def under_cap(mem: GameMemory, card_name: CardName) -> bool:
     return bought_count(mem, card_name) < cap
 
 
-def actions_still_allowed(provinces_left: int) -> bool:
-    return provinces_left > PROVINCES_STOP_ACTIONS
+def greening_thresholds(n_players: int) -> tuple[int, int]:
+    """(duchy_at_or_below, stop_actions_at_or_below).
+
+    2 joueurs : greening plus tard. 3–4 joueurs : plus tôt (Provinces partent vite).
+    """
+    if n_players <= 2:
+        return 5, 4
+    if n_players == 3:
+        return 6, 5
+    return 7, 6
+
+
+def actions_still_allowed(provinces_left: int, n_players: int = 2) -> bool:
+    _, stop_at = greening_thresholds(n_players)
+    return provinces_left > stop_at
 
 
 def _try_action_buy(
@@ -185,11 +216,12 @@ def _try_action_buy(
     return None
 
 
+def _present(game: Game, mem: GameMemory, card: CardName) -> bool:
+    return stock_quantity(game.stock, card) > 0 or bought_count(mem, card) > 0
+
+
 def _witch_in_kingdom(game: Game, mem: GameMemory) -> bool:
-    return (
-        stock_quantity(game.stock, CardName.WITCH) > 0
-        or bought_count(mem, CardName.WITCH) > 0
-    )
+    return _present(game, mem, CardName.WITCH)
 
 
 def _terminal_bought(mem: GameMemory) -> int:
@@ -203,6 +235,46 @@ def _engine_bought(mem: GameMemory) -> int:
 def _needs_engine(mem: GameMemory) -> bool:
     """True si une terminale de plus noierait le deck sans Village/Port."""
     return _terminal_bought(mem) > _engine_bought(mem)
+
+
+def _engine_signal_count(game: Game, mem: GameMemory) -> int:
+    return sum(1 for card in ENGINE_SIGNAL if _present(game, mem, card))
+
+
+def _strong_engine(game: Game, mem: GameMemory) -> bool:
+    if _present(game, mem, CardName.LABORATORY):
+        return True
+    if _present(game, mem, CardName.FESTIVAL):
+        return True
+    has_market = _present(game, mem, CardName.MARKET)
+    has_village = (
+        _present(game, mem, CardName.VILLAGE)
+        or _present(game, mem, CardName.PORT)
+        or _present(game, mem, CardName.FARMINGVILLAGE)
+    )
+    return has_market and has_village
+
+
+def detect_plan(game: Game, mem: GameMemory) -> Plan:
+    """Choisit le plan selon les piles réellement présentes."""
+    curses_left = stock_quantity(game.stock, CardName.CURSE)
+    if _witch_in_kingdom(game, mem) and (
+        curses_left > 0 or bought_count(mem, CardName.WITCH) > 0
+    ):
+        return Plan.WITCH
+
+    if _engine_signal_count(game, mem) >= 3 and _strong_engine(game, mem):
+        return Plan.ENGINE
+
+    if (
+        _present(game, mem, CardName.BANDIT)
+        or _present(game, mem, CardName.MILITIA)
+    ):
+        return Plan.ATTACK
+
+    if _engine_signal_count(game, mem) >= 2:
+        return Plan.ENGINE
+    return Plan.BIG_MONEY
 
 
 def _try_engine_buy(
@@ -222,6 +294,10 @@ def _try_engine_buy(
             picked = _try_action_buy(game, mem, card, allow_actions=allow_actions)
             if picked:
                 return picked
+        if mem.plan == Plan.ENGINE:
+            picked = _try_action_buy(game, mem, CardName.SMITHY, allow_actions=allow_actions)
+            if picked:
+                return picked
     if money >= 3:
         picked = _try_action_buy(game, mem, CardName.VILLAGE, allow_actions=allow_actions)
         if picked:
@@ -239,17 +315,55 @@ def _can_buy_witch(game: Game, mem: GameMemory) -> bool:
     return under_cap(mem, CardName.WITCH) and can_buy(game, CardName.WITCH)
 
 
+def _attack_bought(mem: GameMemory) -> int:
+    return (
+        bought_count(mem, CardName.BANDIT)
+        + bought_count(mem, CardName.MILITIA)
+        + bought_count(mem, CardName.WITCH)
+    )
+
+
 def _prefer_attack(
     game: Game,
     mem: GameMemory,
     curses_left: int,
 ) -> CardName | None:
-    """Sorcière tant qu'il reste des Malédictions, sinon Bandit (Or + pillage)."""
+    """Selon le plan : Sorcière, ou 1 seule attaque légère."""
+    if mem.plan == Plan.ENGINE:
+        return None
     if _needs_engine(mem):
         return None
-    if curses_left > 0 and _can_buy_witch(game, mem):
+    if mem.plan == Plan.ATTACK and _attack_bought(mem) >= 1:
+        return None
+
+    if mem.plan == Plan.WITCH and curses_left > 0 and _can_buy_witch(game, mem):
         return CardName.WITCH
+
+    if mem.plan in (Plan.ATTACK, Plan.WITCH) and curses_left <= 0:
+        picked = _try_action_buy(game, mem, CardName.BANDIT, allow_actions=True)
+        if picked:
+            return picked
+
+    if mem.plan == Plan.ATTACK:
+        picked = _try_action_buy(game, mem, CardName.BANDIT, allow_actions=True)
+        if picked:
+            return picked
+        return _try_action_buy(game, mem, CardName.MILITIA, allow_actions=True)
+
+    if mem.plan == Plan.WITCH and curses_left > 0:
+        return None
+
     return _try_action_buy(game, mem, CardName.BANDIT, allow_actions=True)
+
+
+def _buy_high_vp(game: Game, money: int) -> CardName | None:
+    if money >= 11 and can_buy(game, CardName.COLONY):
+        return CardName.COLONY
+    if money >= 8 and can_buy(game, CardName.PROVINCE):
+        return CardName.PROVINCE
+    if money >= 9 and can_buy(game, CardName.PLATINUM):
+        return CardName.PLATINUM
+    return None
 
 
 def choose_buy(
@@ -258,27 +372,36 @@ def choose_buy(
     mem: GameMemory,
     hand: Cards | None = None,
 ) -> CardName | None:
-    """Priorité adaptative : seules les piles non vides peuvent être choisies."""
+    """Priorité adaptative : plan kingdom + greening selon le nombre de joueurs."""
+    del hand
     provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
-    allow_actions = actions_still_allowed(provinces_left)
+    n_players = max(2, len(game.players))
+    mem.n_players = n_players
+    mem.plan = detect_plan(game, mem)
+    duchy_at, stop_at = greening_thresholds(n_players)
+    allow_actions = provinces_left > stop_at
     curses_left = stock_quantity(game.stock, CardName.CURSE)
 
-    # Victoires / trésors haut de gamme
-    if money >= 11 and can_buy(game, CardName.COLONY):
-        return CardName.COLONY
-    if money >= 8 and can_buy(game, CardName.PROVINCE):
-        return CardName.PROVINCE
-    if money >= 9 and can_buy(game, CardName.PLATINUM):
-        return CardName.PLATINUM
+    high = _buy_high_vp(game, money)
+    if high is not None:
+        return high
+
+    # Plan ENGINE : moteur avant attaque / Or
+    if mem.plan == Plan.ENGINE and money >= 5 and allow_actions:
+        if _needs_engine(mem) or _engine_bought(mem) < 2:
+            picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
+            if picked:
+                return picked
 
     if money >= 6 and allow_actions:
         if _needs_engine(mem):
             picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
             if picked:
                 return picked
-        picked = _prefer_attack(game, mem, curses_left)
-        if picked:
-            return picked
+        if mem.plan != Plan.ENGINE:
+            picked = _prefer_attack(game, mem, curses_left)
+            if picked:
+                return picked
         picked = _try_action_buy(game, mem, CardName.HIRELING, allow_actions=True)
         if picked:
             return picked
@@ -286,21 +409,18 @@ def choose_buy(
     if money >= 6 and can_buy(game, CardName.GOLD):
         return CardName.GOLD
 
-    if (
-        money >= 5
-        and provinces_left <= PROVINCES_LEFT_FOR_DUCHY
-        and can_buy(game, CardName.DUCHY)
-    ):
+    if money >= 5 and provinces_left <= duchy_at and can_buy(game, CardName.DUCHY):
         return CardName.DUCHY
 
     if money >= 5 and allow_actions:
-        if _needs_engine(mem):
+        if _needs_engine(mem) or mem.plan == Plan.ENGINE:
             picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
             if picked:
                 return picked
-        picked = _prefer_attack(game, mem, curses_left)
-        if picked:
-            return picked
+        if mem.plan != Plan.ENGINE:
+            picked = _prefer_attack(game, mem, curses_left)
+            if picked:
+                return picked
         for card in (
             CardName.LABORATORY,
             CardName.FESTIVAL,
@@ -312,44 +432,56 @@ def choose_buy(
                 return picked
 
     if money >= 4 and allow_actions:
-        if _needs_engine(mem):
+        if _needs_engine(mem) or mem.plan == Plan.ENGINE:
             picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
             if picked:
                 return picked
-        picked = _try_action_buy(game, mem, CardName.MILITIA, allow_actions=True)
-        if picked:
-            return picked
+        if mem.plan == Plan.ATTACK and not _needs_engine(mem):
+            picked = _prefer_attack(game, mem, curses_left)
+            if picked and picked == CardName.MILITIA:
+                return picked
+            picked = _try_action_buy(game, mem, CardName.MILITIA, allow_actions=True)
+            if picked and _attack_bought(mem) < 1:
+                return picked
         for card in (CardName.PORT, CardName.FARMINGVILLAGE, CardName.MAGPIE):
             picked = _try_action_buy(game, mem, card, allow_actions=True)
             if picked:
                 return picked
-        if _witch_in_kingdom(game, mem) and bought_count(mem, CardName.CHAPEL) == 0:
+        if mem.plan == Plan.WITCH and bought_count(mem, CardName.CHAPEL) == 0:
             picked = _try_action_buy(
                 game, mem, CardName.MONEYLENDER, allow_actions=True
             )
             if picked:
                 return picked
-        if not _needs_engine(mem):
+        if mem.plan != Plan.ENGINE and not _needs_engine(mem):
             for card in (CardName.SMITHY, CardName.MONEYLENDER):
                 picked = _try_action_buy(game, mem, card, allow_actions=True)
                 if picked:
                     return picked
+        if mem.plan == Plan.ENGINE and not _needs_engine(mem):
+            picked = _try_action_buy(game, mem, CardName.SMITHY, allow_actions=True)
+            if picked:
+                return picked
 
-    # Chapelle à 2 ou 3 : on ne dépense pas une main à 4+ pour une carte à 2.
-    if money < 4 and _witch_in_kingdom(game, mem):
-        picked = _try_action_buy(game, mem, CardName.CHAPEL, allow_actions=allow_actions)
+    # Chapelle tôt uniquement en plan Sorcière
+    if (
+        money < 4
+        and mem.plan == Plan.WITCH
+        and allow_actions
+    ):
+        picked = _try_action_buy(game, mem, CardName.CHAPEL, allow_actions=True)
         if picked:
             return picked
 
     if money >= 3:
-        if allow_actions and _needs_engine(mem):
+        if allow_actions and (_needs_engine(mem) or mem.plan in (Plan.ENGINE, Plan.WITCH)):
             picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
             if picked:
                 return picked
         picked = _try_action_buy(game, mem, CardName.VILLAGE, allow_actions=allow_actions)
         if picked:
             return picked
-        if allow_actions and not _needs_engine(mem):
+        if allow_actions and mem.plan != Plan.ENGINE and not _needs_engine(mem):
             picked = _try_action_buy(
                 game, mem, CardName.WOODCUTTER, allow_actions=True
             )
@@ -411,7 +543,6 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
         card_cls = Card.types.get(card_name)
         if card_cls is None or not card_cls.is_action:
             continue
-        # MoneyLender seulement si Copper en main
         if card_name == CardName.MONEYLENDER and hand_quantity(hand, CardName.COPPER) < 1:
             continue
         if card_cls.more_actions > 0:
@@ -527,27 +658,31 @@ def gain_score(card: CardName, mem: GameMemory) -> int:
         return -1000
     if card == CardName.WITCH and mem.curses_left <= 0:
         return 15
-    late = mem.provinces_left <= PROVINCES_LEFT_FOR_DUCHY
+    duchy_at, _ = greening_thresholds(mem.n_players)
+    late = mem.provinces_left <= duchy_at
     endgame = mem.provinces_left <= PROVINCES_LEFT_FOR_ESTATE
+    engine_bias = 20 if mem.plan == Plan.ENGINE else 0
+    witch_bias = 20 if mem.plan == Plan.WITCH else 0
     ranked = {
         CardName.COLONY: 200,
         CardName.PROVINCE: 190,
         CardName.PLATINUM: 170,
         CardName.GOLD: 160,
-        CardName.WITCH: 155,
-        CardName.BANDIT: 150,
+        CardName.WITCH: 155 + witch_bias,
+        CardName.BANDIT: 150 if mem.plan != Plan.ENGINE else 40,
         CardName.HIRELING: 145,
-        CardName.LABORATORY: 140,
-        CardName.FESTIVAL: 138,
-        CardName.MARKET: 136,
-        CardName.MILITIA: 134,
+        CardName.LABORATORY: 140 + engine_bias,
+        CardName.FESTIVAL: 138 + engine_bias,
+        CardName.MARKET: 136 + engine_bias,
+        CardName.MILITIA: 134 if mem.plan == Plan.ATTACK else 50,
         CardName.BUREAUCRAT: 40,
         CardName.COUNCILROOM: 30,
-        CardName.SMITHY: 120,
-        CardName.PORT: 118,
-        CardName.FARMINGVILLAGE: 116,
-        CardName.MAGPIE: 112,
-        CardName.VILLAGE: 108,
+        CardName.SMITHY: 120 + engine_bias // 2,
+        CardName.PORT: 118 + engine_bias,
+        CardName.FARMINGVILLAGE: 116 + engine_bias,
+        CardName.MAGPIE: 112 + engine_bias,
+        CardName.VILLAGE: 108 + engine_bias + witch_bias // 2,
+        CardName.CHAPEL: 100 if mem.plan == Plan.WITCH else 20,
         CardName.DUCHY: 110 if late else 28,
         CardName.SILVER: 80,
         CardName.MONEYLENDER: 70,
@@ -602,11 +737,7 @@ def choose_discard(hand: list[CardName]) -> CardName:
 
 
 def choose_trash(hand: list[CardName], mem: GameMemory) -> CardName:
-    """Rénovation (+2) et Renouvellement (+1) : améliorer un rebut, pas une Province.
-
-    Domaine et Argent montent vers une attaque ou un meilleur trésor dans les deux
-    cas. L'Or ne part que s'il n'y a rien de plus sûr (Rénovation peut viser la Province).
-    """
+    """Rénovation (+2) et Renouvellement (+1) : améliorer un rebut, pas une Province."""
     del mem
 
     def trash_rank(card: CardName) -> int:
@@ -688,6 +819,8 @@ def choose_money_to_upgrade(money_cards: list[CardName]) -> CardName:
 def _remember_stock(mem: GameMemory, game: Game) -> None:
     mem.provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
     mem.curses_left = stock_quantity(game.stock, CardName.CURSE)
+    mem.n_players = max(2, len(game.players))
+    mem.plan = detect_plan(game, mem)
 
 
 def decide_play(game: Game, game_id: str) -> str:
@@ -714,8 +847,9 @@ def decide_play(game: Game, game_id: str) -> str:
             _apply_action_effects(action, turn)
             decision = f"ACTION {action.value}"
             logger.info(
-                "game=%s actions_left=%s money_bonus=%s -> %s",
+                "game=%s plan=%s actions_left=%s money_bonus=%s -> %s",
                 game_id,
+                mem.plan,
                 turn.actions_left,
                 turn.money_bonus,
                 decision,
@@ -733,7 +867,7 @@ def decide_play(game: Game, game_id: str) -> str:
     card = choose_buy(game, money, mem, player.hand)
     if card is None:
         turn.purchases_left = 0
-        logger.info("game=%s money=%s -> END_TURN", game_id, money)
+        logger.info("game=%s plan=%s money=%s -> END_TURN", game_id, mem.plan, money)
         return "END_TURN"
 
     cost = card_cost(card)
@@ -743,8 +877,9 @@ def decide_play(game: Game, game_id: str) -> str:
 
     decision = f"BUY {card.value}"
     logger.info(
-        "game=%s money=%s spent=%s buys_left=%s -> %s",
+        "game=%s plan=%s money=%s spent=%s buys_left=%s -> %s",
         game_id,
+        mem.plan,
         money,
         turn.money_spent,
         turn.purchases_left,
