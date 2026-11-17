@@ -26,7 +26,8 @@ logger = logging.getLogger("strategy")
 
 PLAYER_NAME = os.environ.get("PLAYER_NAME", "Groupe 5")
 
-PROVINCES_LEFT_FOR_ESTATE = 2
+# Empire green très tôt (beaucoup de Duchés / Domaines) : on aligne.
+PROVINCES_LEFT_FOR_ESTATE = 4
 
 CAPS: dict[CardName, int] = {
     CardName.WITCH: 2,
@@ -151,12 +152,15 @@ def approx_deck_size(mem: GameMemory) -> int:
 
 
 def greening_thresholds(n_players: int) -> tuple[int, int, int]:
-    """(duchy_at, gardens_at, stop_actions_at)."""
+    """(duchy_at, gardens_at, stop_actions_at).
+
+    Plus agressif en 3–4j : l'Empire achète ~0.7 Duché par Province, nous ~0.2.
+    """
     if n_players <= 2:
-        return 6, 7, 5
+        return 5, 6, 4
     if n_players == 3:
-        return 6, 7, 5
-    return 7, 8, 6
+        return 8, 9, 5
+    return 9, 10, 6
 
 
 def village_count(mem: GameMemory) -> int:
@@ -259,11 +263,13 @@ def choose_buy(
         ):
             return picked
 
-    if money >= 5 and greening and can_buy(game, CardName.DUCHY):
+    # Greening prioritaire sur le moteur dès que la course VP est lancée.
+    if money >= 5 and provinces_left <= duchy_at and can_buy(game, CardName.DUCHY):
         return CardName.DUCHY
 
-    if money >= 4 and want_gardens and greening and can_buy(game, CardName.GARDENS):
-        return CardName.GARDENS
+    if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
+        if greening or provinces_left <= gardens_at:
+            return CardName.GARDENS
 
     buy_actions = allow_actions and not action_overload(mem)
 
