@@ -1,13 +1,16 @@
 """
-Stratégie Chapelle-Big Money (visée top classement).
+Stratégie calquée sur Le 4ème Empire (parties gagnantes récentes).
 
-Socle : Province / Or / Argent + greening Duché/Gardens/Domaine.
-Splash uniquement si utile :
-- Chapelle×1 (dès 2$) — épure Domaines / Malédictions / Cuivres
-- Sorcière×2, Milice×1
-- Mine×1, Prêteur×1
-- 1 Festival OU 1 village si plusieurs terminales
-- Pas de Colonie, pas de Labo/Market/Hireling (ralentissent la course)
+Socle BM : Argent → Or → Province, puis greening Duché/Domaine/Gardens.
+Splash kingdom (caps serrés) :
+- Hireling×2 (Empire en gagne souvent avec)
+- Witch×2 / Militia×1 / Bandit×1 / Smithy×1
+- Laboratory×2, Festival×1, Village/FV/Port si 2+ terminales
+- Chapelle×1, Mine×1, Prêteur×1 (cartes prof)
+- Pas de Colonie
+
+Greening : assez tôt, mais sans sacrifier la course aux Provinces
+(les défaites Empire sur-achètent Duché/Domaine).
 
 Toute exception dans decide_play → END_TURN.
 """
@@ -26,21 +29,25 @@ logger = logging.getLogger("strategy")
 
 PLAYER_NAME = os.environ.get("PLAYER_NAME", "Groupe 5")
 
-# Empire green très tôt (beaucoup de Duchés / Domaines) : on aligne.
-PROVINCES_LEFT_FOR_ESTATE = 4
+PROVINCES_LEFT_FOR_ESTATE = 3
 
 CAPS: dict[CardName, int] = {
     CardName.WITCH: 2,
     CardName.MILITIA: 1,
+    CardName.BANDIT: 1,
+    CardName.SMITHY: 1,
+    CardName.HIRELING: 2,
+    CardName.LABORATORY: 2,
     CardName.FESTIVAL: 1,
     CardName.VILLAGE: 1,
     CardName.FARMINGVILLAGE: 1,
     CardName.PORT: 1,
-    CardName.SMITHY: 1,
+    CardName.MARKET: 1,
     CardName.CHAPEL: 1,
     CardName.MINE: 1,
     CardName.MONEYLENDER: 1,
     CardName.REMODEL: 1,
+    CardName.BUREAUCRAT: 1,
     CardName.GARDENS: 4,
 }
 
@@ -150,12 +157,15 @@ def approx_deck_size(mem: GameMemory) -> int:
 
 
 def greening_thresholds(n_players: int) -> tuple[int, int, int]:
-    """(duchy_at, gardens_at, stop_actions_at)."""
+    """(duchy_at, gardens_at, stop_actions_at).
+
+    Moins agressif qu'avant : les losses Empire ont trop de Duchés vs Provinces.
+    """
     if n_players <= 2:
-        return 5, 6, 4
+        return 4, 5, 3
     if n_players == 3:
-        return 9, 10, 5
-    return 10, 11, 6
+        return 7, 8, 4
+    return 8, 9, 5
 
 
 def village_count(mem: GameMemory) -> int:
@@ -171,22 +181,27 @@ def terminal_count(mem: GameMemory) -> int:
     return (
         bought_count(mem, CardName.WITCH)
         + bought_count(mem, CardName.MILITIA)
+        + bought_count(mem, CardName.BANDIT)
         + bought_count(mem, CardName.SMITHY)
+        + bought_count(mem, CardName.BUREAUCRAT)
         + bought_count(mem, CardName.MINE)
         + bought_count(mem, CardName.MONEYLENDER)
-        + bought_count(mem, CardName.REMODEL)
     )
 
 
 def need_villages(mem: GameMemory) -> bool:
-    """Village/Festival seulement si 2+ terminales à enchaîner."""
     return terminal_count(mem) >= 2 and village_count(mem) < 1
 
 
 def action_overload(mem: GameMemory) -> bool:
-    """Trop d'actions = deck lent : on repasse sur l'argent."""
-    actions = terminal_count(mem) + village_count(mem)
-    return actions >= 4
+    actions = (
+        terminal_count(mem)
+        + village_count(mem)
+        + bought_count(mem, CardName.LABORATORY)
+        + bought_count(mem, CardName.HIRELING)
+        + bought_count(mem, CardName.MARKET)
+    )
+    return actions >= 6
 
 
 def _try(
@@ -230,37 +245,58 @@ def choose_buy(
     want_gardens = _want_gardens(mem, provinces_left, gardens_at)
     witch_board = in_kingdom(game, CardName.WITCH)
 
-    # --- Victoire / argent de haut niveau ---------------------------------
-    # Pas de Colonie : les −10000 récents suivent presque toujours un BUY colony.
+    # --- Victoire / argent (pas de Colonie) --------------------------------
     if money >= 8 and can_buy(game, CardName.PROVINCE):
         return CardName.PROVINCE
     if money >= 9 and can_buy(game, CardName.PLATINUM):
         return CardName.PLATINUM
 
-    if money >= 6 and can_buy(game, CardName.GOLD):
-        return CardName.GOLD
+    if money >= 6:
+        golds = bought_count(mem, CardName.GOLD)
+        # Empire : 1er Or, puis Hireling, puis encore de l'Or.
+        if (
+            allow_actions
+            and golds >= 1
+            and under_cap(mem, CardName.HIRELING)
+            and can_buy(game, CardName.HIRELING)
+        ):
+            return CardName.HIRELING
+        if can_buy(game, CardName.GOLD):
+            return CardName.GOLD
+        if allow_actions and (picked := _try(game, mem, CardName.HIRELING)):
+            return picked
 
-    # Greening prioritaire dès que la course VP est lancée.
+    # Greening : Duché seulement quand la pile Province a vraiment bougé.
     if money >= 5 and provinces_left <= duchy_at and can_buy(game, CardName.DUCHY):
         return CardName.DUCHY
 
-    if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
-        if greening or provinces_left <= gardens_at:
-            return CardName.GARDENS
+    if money >= 4 and want_gardens and provinces_left <= gardens_at and can_buy(
+        game, CardName.GARDENS
+    ):
+        return CardName.GARDENS
 
     buy_actions = allow_actions and not action_overload(mem)
 
-    # --- Splash ciblé uniquement ------------------------------------------
+    # --- Splash type Empire -----------------------------------------------
     if buy_actions and money >= 5:
         if curses_left > 0 and (picked := _try(game, mem, CardName.WITCH)):
             return picked
+        if picked := _try(game, mem, CardName.LABORATORY):
+            return picked
+        if curses_left == 0 and (picked := _try(game, mem, CardName.BANDIT)):
+            return picked
+        if need_villages(mem) and (picked := _try(game, mem, CardName.FESTIVAL)):
+            return picked
         if picked := _try(game, mem, CardName.MINE):
             return picked
-        # Festival = village + argent + achat : 1 max si 2 terminales.
-        if need_villages(mem) and (picked := _try(game, mem, CardName.FESTIVAL)):
+        if village_count(mem) >= 1 and (picked := _try(game, mem, CardName.MARKET)):
             return picked
 
     if buy_actions and money >= 4:
+        # Smithy souvent en ouverture Empire si pas de Witch.
+        if bought_count(mem, CardName.WITCH) == 0 and bought_count(mem, CardName.MILITIA) == 0:
+            if picked := _try(game, mem, CardName.SMITHY):
+                return picked
         if picked := _try(game, mem, CardName.MILITIA):
             return picked
         if need_villages(mem):
@@ -273,9 +309,8 @@ def choose_buy(
                     return picked
         if picked := _try(game, mem, CardName.MONEYLENDER):
             return picked
-        if bought_count(mem, CardName.WITCH) == 0:
-            if picked := _try(game, mem, CardName.SMITHY):
-                return picked
+        if picked := _try(game, mem, CardName.BUREAUCRAT):
+            return picked
         if greening and (picked := _try(game, mem, CardName.REMODEL)):
             return picked
 
@@ -283,7 +318,6 @@ def choose_buy(
         if need_villages(mem) and (picked := _try(game, mem, CardName.VILLAGE)):
             return picked
 
-    # Chapelle dès 2–4$ : priorité absolue sur l'épuration.
     if buy_actions and money >= 2 and (picked := _try(game, mem, CardName.CHAPEL)):
         return picked
 
@@ -300,13 +334,7 @@ def choose_buy(
     ):
         return CardName.ESTATE
 
-    if (
-        money >= 2
-        and money < 3
-        and greening
-        and village_count(mem) > 0
-        and can_buy(game, CardName.ESTATE)
-    ):
+    if money >= 2 and money < 3 and greening and can_buy(game, CardName.ESTATE):
         return CardName.ESTATE
 
     return None

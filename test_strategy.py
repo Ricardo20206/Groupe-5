@@ -99,23 +99,35 @@ def main() -> None:
     )
     mem.bought[CardName.WITCH] = 2
     check(
-        "$5 apres witches -> mine",
+        "$5 apres witches -> laboratory",
+        choose_buy(make_game({}, stock=stock()), 5, mem),
+        CardName.LABORATORY,
+    )
+    mem.bought[CardName.LABORATORY] = 2
+    check(
+        "$5 festival si 2 witches",
+        choose_buy(make_game({}, stock=stock({CardName.BANDIT: 0})), 5, mem),
+        CardName.FESTIVAL,
+    )
+    mem.bought[CardName.FESTIVAL] = 1
+    check(
+        "$5 apres festival -> mine",
         choose_buy(
-            make_game({}, stock=stock({CardName.MINE: 10})),
+            make_game({}, stock=stock({CardName.MINE: 10, CardName.BANDIT: 0})),
             5,
             mem,
         ),
         CardName.MINE,
     )
-    mem.bought[CardName.MINE] = 1
-    check(
-        "$5 apres mine -> festival",
-        choose_buy(make_game({}, stock=stock()), 5, mem),
-        CardName.FESTIVAL,
-    )
     mem.bought.clear()
     check(
-        "$4 militia",
+        "$4 smithy ouverture (pas witch/militia)",
+        choose_buy(make_game({}, stock=stock()), 4, mem),
+        CardName.SMITHY,
+    )
+    mem.bought[CardName.SMITHY] = 1
+    check(
+        "$4 militia apres smithy",
         choose_buy(make_game({}, stock=stock()), 4, mem),
         CardName.MILITIA,
     )
@@ -140,9 +152,15 @@ def main() -> None:
 
     mem.bought.clear()
     check(
-        "$6 or",
-        choose_buy(make_game({}, stock=stock()), 6, mem),
+        "$6 or d abord",
+        choose_buy(make_game({}, stock=stock({CardName.HIRELING: 10})), 6, mem),
         CardName.GOLD,
+    )
+    mem.bought[CardName.GOLD] = 1
+    check(
+        "$6 hireling apres 1 or",
+        choose_buy(make_game({}, stock=stock({CardName.HIRELING: 10})), 6, mem),
+        CardName.HIRELING,
     )
     check(
         "$11 pas de colonie -> province",
@@ -155,9 +173,10 @@ def main() -> None:
     )
 
     mem.bought.clear()
+    mem.bought.clear()
     check(
-        "$5 p5 duchy (2j)",
-        choose_buy(make_game({}, provinces=5, stock=stock()), 5, mem),
+        "$5 p4 duchy (2j)",
+        choose_buy(make_game({}, provinces=4, stock=stock()), 5, mem),
         CardName.DUCHY,
     )
     check(
@@ -166,17 +185,17 @@ def main() -> None:
         CardName.GARDENS,
     )
     check(
-        "$5 p9 duchy (3j)",
+        "$5 p7 duchy (3j)",
         choose_buy(
-            make_game({}, provinces=9, stock=stock(), n_players=3),
+            make_game({}, provinces=7, stock=stock(), n_players=3),
             5,
             mem,
         ),
         CardName.DUCHY,
     )
     check(
-        "$2 p4 estate",
-        choose_buy(make_game({}, provinces=4, stock=stock()), 2, mem),
+        "$2 p3 estate",
+        choose_buy(make_game({}, provinces=3, stock=stock()), 2, mem),
         CardName.ESTATE,
     )
     check(
