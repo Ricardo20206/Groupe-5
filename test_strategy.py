@@ -54,7 +54,7 @@ def make_game(
     )
 
 
-def stock(**extra: int) -> dict[CardName, int]:
+def stock(extra: dict[CardName, int] | None = None) -> dict[CardName, int]:
     base = {
         CardName.MILITIA: 10,
         CardName.WITCH: 10,
@@ -69,7 +69,8 @@ def stock(**extra: int) -> dict[CardName, int]:
         CardName.MARKET: 10,
         CardName.GARDENS: 12,
     }
-    base.update(extra)
+    if extra:
+        base.update(extra)
     return base
 
 
@@ -112,11 +113,29 @@ def main() -> None:
     )
 
     mem.bought.clear()
-    mem.bought[CardName.GOLD] = 1
     check(
-        "$6 hireling apres 1 or",
+        "$6 or prioritaire (pas hireling)",
         choose_buy(make_game({}, stock=stock()), 6, mem),
+        CardName.GOLD,
+    )
+    mem.bought[CardName.GOLD] = 2
+    check(
+        "$6 hireling si or epuise et 2 or",
+        choose_buy(
+            make_game({}, stock=stock({CardName.GOLD: 0})),
+            6,
+            mem,
+        ),
         CardName.HIRELING,
+    )
+    check(
+        "$11 pas de colonie -> province",
+        choose_buy(
+            make_game({}, stock=stock({CardName.COLONY: 10})),
+            11,
+            mem,
+        ),
+        CardName.PROVINCE,
     )
 
     mem.bought.clear()

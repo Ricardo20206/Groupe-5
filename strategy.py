@@ -1,16 +1,15 @@
 """
-Stratégie adaptative visant le haut du classement.
+Stratégie adaptative : Big Money d'abord, splash ciblé.
 
-Socle Big Money (Province / Or / Argent) + options selon le kingdom :
-- Sorcière×2 si Malédictions
-- Milice / Bandit en splash
-- Festival / Village / Farming Village / Port pour enchaîner les terminales
-- Labo / Forgeron / Market / Council Room en moteur léger
-- Hireling (1–2) à 6$
+Priorité Or/Province. Options limitées selon le kingdom :
+- Sorcière×2, Milice×1, Bandit×1
+- 1 Festival + 1 village (FV/Port/Village) max pour enchaîner
+- 1 Labo OU 1 Forgeron, 1 Hireling après 2 Or
 - Chapelle si Sorcière au kingdom
-- Greening Duché / Gardens / Domaine en fin de partie
+- Pas de Colonie (corrélée aux crashes −10000)
+- Greening Duché / Gardens / Domaine
 
-Toute exception dans decide_play → END_TURN (évite les −10000).
+Toute exception dans decide_play → END_TURN.
 """
 
 from __future__ import annotations
@@ -33,18 +32,16 @@ CAPS: dict[CardName, int] = {
     CardName.WITCH: 2,
     CardName.MILITIA: 1,
     CardName.BANDIT: 1,
-    CardName.FESTIVAL: 2,
-    CardName.VILLAGE: 2,
-    CardName.FARMINGVILLAGE: 2,
-    CardName.PORT: 2,
-    CardName.LABORATORY: 2,
+    CardName.FESTIVAL: 1,
+    CardName.VILLAGE: 1,
+    CardName.FARMINGVILLAGE: 1,
+    CardName.PORT: 1,
+    CardName.LABORATORY: 1,
     CardName.SMITHY: 1,
     CardName.MARKET: 1,
-    CardName.COUNCILROOM: 1,
-    CardName.LIBRARY: 1,
-    CardName.HIRELING: 2,
+    CardName.HIRELING: 1,
     CardName.CHAPEL: 1,
-    CardName.GARDENS: 4,
+    CardName.GARDENS: 3,
     CardName.BUREAUCRAT: 1,
 }
 
@@ -184,7 +181,22 @@ def terminal_count(mem: GameMemory) -> int:
 
 
 def need_villages(mem: GameMemory) -> bool:
-    return terminal_count(mem) >= 1 and village_count(mem) < max(1, terminal_count(mem))
+    """Un seul village suffit pour Witch + Militia."""
+    return terminal_count(mem) >= 1 and village_count(mem) < 1
+
+
+def action_overload(mem: GameMemory) -> bool:
+    """Trop d'actions = deck lent : on repasse sur l'argent."""
+    actions = (
+        terminal_count(mem)
+        + village_count(mem)
+        + bought_count(mem, CardName.LABORATORY)
+        + bought_count(mem, CardName.MARKET)
+        + bought_count(mem, CardName.HIRELING)
+        + bought_count(mem, CardName.CHAPEL)
+        + bought_count(mem, CardName.BUREAUCRAT)
+    )
+    return actions >= 5
 
 
 def _try(
@@ -229,25 +241,22 @@ def choose_buy(
     witch_board = in_kingdom(game, CardName.WITCH)
 
     # --- Victoire / argent de haut niveau ---------------------------------
-    # Colonie seulement à 11$+ et pile présente : évite les achats foireux.
-    if money >= 11 and can_buy(game, CardName.COLONY):
-        return CardName.COLONY
+    # Pas de Colonie : les −10000 récents suivent presque toujours un BUY colony.
     if money >= 8 and can_buy(game, CardName.PROVINCE):
         return CardName.PROVINCE
     if money >= 9 and can_buy(game, CardName.PLATINUM):
         return CardName.PLATINUM
 
     if money >= 6:
-        # Hireling après le 1er Or : Empire le prend, utile en multi.
-        if (
-            allow_actions
-            and bought_count(mem, CardName.GOLD) >= 1
-            and (picked := _try(game, mem, CardName.HIRELING))
-        ):
-            return picked
         if can_buy(game, CardName.GOLD):
             return CardName.GOLD
-        if allow_actions and (picked := _try(game, mem, CardName.HIRELING)):
+        # Hireling seulement si pas d'Or dispo et déjà 2 Or en deck.
+        if (
+            allow_actions
+            and not action_overload(mem)
+            and bought_count(mem, CardName.GOLD) >= 2
+            and (picked := _try(game, mem, CardName.HIRELING))
+        ):
             return picked
 
     if money >= 5 and greening and can_buy(game, CardName.DUCHY):
@@ -256,45 +265,24 @@ def choose_buy(
     if money >= 4 and want_gardens and greening and can_buy(game, CardName.GARDENS):
         return CardName.GARDENS
 
-    # --- Actions mid-game -------------------------------------------------
-    if allow_actions and money >= 5:
+    buy_actions = allow_actions and not action_overload(mem)
+
+    # --- Actions mid-game (splash, pas un gros moteur) --------------------
+    if buy_actions and money >= 5:
         if curses_left > 0 and (picked := _try(game, mem, CardName.WITCH)):
             return picked
-        # Festival pour jouer Witch/Militia + +Buy (greening Gardens).
-        if terminal_count(mem) >= 1 or witch_board:
-            if picked := _try(game, mem, CardName.FESTIVAL):
-                return picked
-        if picked := _try(game, mem, CardName.LABORATORY):
-            return picked
-        if picked := _try(game, mem, CardName.MARKET):
+        if terminal_count(mem) >= 1 and (picked := _try(game, mem, CardName.FESTIVAL)):
             return picked
         if curses_left == 0 and (picked := _try(game, mem, CardName.BANDIT)):
             return picked
-        if picked := _try(game, mem, CardName.COUNCILROOM):
+        # Labo seulement si on a déjà une attaque et pas trop d'actions.
+        if terminal_count(mem) >= 1 and (picked := _try(game, mem, CardName.LABORATORY)):
             return picked
-        if picked := _try(game, mem, CardName.LIBRARY):
-            return picked
-        if picked := _try(game, mem, CardName.FESTIVAL):
-            return picked
-        if picked := _try(game, mem, CardName.BANDIT):
+        if village_count(mem) >= 1 and (picked := _try(game, mem, CardName.MARKET)):
             return picked
 
-    if allow_actions and money >= 4:
+    if buy_actions and money >= 4:
         if picked := _try(game, mem, CardName.MILITIA):
-            return picked
-        if need_villages(mem) or terminal_count(mem) >= 1:
-            for village in (
-                CardName.FARMINGVILLAGE,
-                CardName.PORT,
-                CardName.VILLAGE,
-            ):
-                if picked := _try(game, mem, village):
-                    return picked
-        # Smithy si pas de Witch (sinon Witch fait déjà +2 cards).
-        if bought_count(mem, CardName.WITCH) == 0:
-            if picked := _try(game, mem, CardName.SMITHY):
-                return picked
-        if picked := _try(game, mem, CardName.BUREAUCRAT):
             return picked
         if need_villages(mem):
             for village in (
@@ -304,12 +292,17 @@ def choose_buy(
             ):
                 if picked := _try(game, mem, village):
                     return picked
+        if bought_count(mem, CardName.WITCH) == 0:
+            if picked := _try(game, mem, CardName.SMITHY):
+                return picked
+        if picked := _try(game, mem, CardName.BUREAUCRAT):
+            return picked
 
-    if allow_actions and money >= 3:
+    if buy_actions and money >= 3:
         if need_villages(mem) and (picked := _try(game, mem, CardName.VILLAGE)):
             return picked
 
-    if allow_actions and money >= 2 and witch_board:
+    if buy_actions and money >= 2 and witch_board:
         if picked := _try(game, mem, CardName.CHAPEL):
             return picked
 
