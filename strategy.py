@@ -1,13 +1,13 @@
 """
-Stratégie adaptative : Big Money d'abord, splash ciblé.
+Stratégie adaptative : Big Money + épuration (prof).
 
-Priorité Or/Province. Options limitées selon le kingdom :
-- Sorcière×2, Milice×1, Bandit×1
-- 1 Festival + 1 village (FV/Port/Village) max pour enchaîner
-- 1 Labo OU 1 Forgeron, 1 Hireling après 2 Or
-- Chapelle si Sorcière au kingdom
-- Pas de Colonie (corrélée aux crashes −10000)
-- Greening Duché / Gardens / Domaine
+Priorité Or/Province. Splash kingdom :
+- Chapelle×1 (prioritaire à 2–3$) : écarte Domaines / Malédictions / Cuivres
+- Mine×1 : Cuivre→Argent ou Argent→Or
+- Prêteur×1 : écarte Cuivre pour +3$
+- Rénovation×1 en fin de partie
+- Sorcière×2, Milice×1, Festival/village légers
+- Pas de Colonie ; greening Duché / Gardens / Domaine
 
 Toute exception dans decide_play → END_TURN.
 """
@@ -42,6 +42,9 @@ CAPS: dict[CardName, int] = {
     CardName.MARKET: 1,
     CardName.HIRELING: 1,
     CardName.CHAPEL: 1,
+    CardName.MINE: 1,
+    CardName.MONEYLENDER: 1,
+    CardName.REMODEL: 1,
     CardName.GARDENS: 3,
     CardName.BUREAUCRAT: 1,
 }
@@ -181,6 +184,9 @@ def terminal_count(mem: GameMemory) -> int:
         + bought_count(mem, CardName.COUNCILROOM)
         + bought_count(mem, CardName.LIBRARY)
         + bought_count(mem, CardName.BUREAUCRAT)
+        + bought_count(mem, CardName.MINE)
+        + bought_count(mem, CardName.MONEYLENDER)
+        + bought_count(mem, CardName.REMODEL)
     )
 
 
@@ -197,9 +203,11 @@ def action_overload(mem: GameMemory) -> bool:
         + bought_count(mem, CardName.LABORATORY)
         + bought_count(mem, CardName.MARKET)
         + bought_count(mem, CardName.HIRELING)
-        + bought_count(mem, CardName.CHAPEL)
         + bought_count(mem, CardName.BUREAUCRAT)
+        + bought_count(mem, CardName.MINE)
+        + bought_count(mem, CardName.MONEYLENDER)
     )
+    # Chapelle exclue : elle accélère le deck, elle ne le charge pas.
     return actions >= 5
 
 
@@ -272,16 +280,19 @@ def choose_buy(
             return CardName.GARDENS
 
     buy_actions = allow_actions and not action_overload(mem)
+    del witch_board
 
-    # --- Actions mid-game (splash, pas un gros moteur) --------------------
+    # --- Actions mid-game (splash + épuration) ----------------------------
     if buy_actions and money >= 5:
         if curses_left > 0 and (picked := _try(game, mem, CardName.WITCH)):
+            return picked
+        # Mine : améliore Cuivre/Argent sans gonfler le deck autant qu'un 2e Or tardif.
+        if picked := _try(game, mem, CardName.MINE):
             return picked
         if terminal_count(mem) >= 1 and (picked := _try(game, mem, CardName.FESTIVAL)):
             return picked
         if curses_left == 0 and (picked := _try(game, mem, CardName.BANDIT)):
             return picked
-        # Labo seulement si on a déjà une attaque et pas trop d'actions.
         if terminal_count(mem) >= 1 and (picked := _try(game, mem, CardName.LABORATORY)):
             return picked
         if village_count(mem) >= 1 and (picked := _try(game, mem, CardName.MARKET)):
@@ -298,9 +309,14 @@ def choose_buy(
             ):
                 if picked := _try(game, mem, village):
                     return picked
+        # Prêteur : +3$ immédiat et retire un Cuivre (très fort avec Chapelle).
+        if picked := _try(game, mem, CardName.MONEYLENDER):
+            return picked
         if bought_count(mem, CardName.WITCH) == 0:
             if picked := _try(game, mem, CardName.SMITHY):
                 return picked
+        if greening and (picked := _try(game, mem, CardName.REMODEL)):
+            return picked
         if picked := _try(game, mem, CardName.BUREAUCRAT):
             return picked
 
@@ -308,9 +324,9 @@ def choose_buy(
         if need_villages(mem) and (picked := _try(game, mem, CardName.VILLAGE)):
             return picked
 
-    if buy_actions and money >= 2 and witch_board:
-        if picked := _try(game, mem, CardName.CHAPEL):
-            return picked
+    # Chapelle dès 2$ : carte la plus forte au coût selon le prof.
+    if buy_actions and money >= 2 and (picked := _try(game, mem, CardName.CHAPEL)):
+        return picked
 
     if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
         return CardName.GARDENS
@@ -345,7 +361,7 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
     if hand is None:
         return None
 
-    # Chapelle si rebut en main.
+    # Chapelle si rebut en main (Domaines / Malédictions / Cuivres).
     if hand_quantity(hand, CardName.CHAPEL) > 0:
         junk = (
             hand_quantity(hand, CardName.CURSE)
@@ -365,6 +381,12 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
         if card_cls is None or not card_cls.is_action:
             continue
         if card_name == CardName.MONEYLENDER and hand_quantity(hand, CardName.COPPER) < 1:
+            continue
+        if card_name == CardName.MINE and (
+            hand_quantity(hand, CardName.COPPER)
+            + hand_quantity(hand, CardName.SILVER)
+            + hand_quantity(hand, CardName.CURSEDGOLD)
+        ) < 1:
             continue
         if card_name == CardName.CHAPEL:
             continue  # déjà géré ; sans rebut on ne la joue pas
@@ -389,23 +411,35 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
         return None
 
     curses_left = stock_quantity(game.stock, CardName.CURSE)
+    has_copper = hand_quantity(hand, CardName.COPPER) > 0
+    has_upgrade = (
+        hand_quantity(hand, CardName.COPPER)
+        + hand_quantity(hand, CardName.SILVER)
+        + hand_quantity(hand, CardName.CURSEDGOLD)
+    ) > 0
 
     def terminal_score(item: tuple[CardName, type[Card]]) -> tuple:
         name, cls = item
         if name == CardName.WITCH and curses_left > 0:
-            attack = 40
+            prio = 50
+        elif name == CardName.MONEYLENDER and has_copper:
+            prio = 35
+        elif name == CardName.MINE and has_upgrade:
+            prio = 32
         elif name == CardName.MILITIA:
-            attack = 25
+            prio = 25
         elif name == CardName.BANDIT:
-            attack = 20
+            prio = 20
+        elif name == CardName.REMODEL:
+            prio = 15
         elif name == CardName.BUREAUCRAT:
-            attack = 12
+            prio = 12
         elif name == CardName.WITCH:
-            attack = 5
+            prio = 5
         else:
-            attack = 0
+            prio = 0
         return (
-            attack,
+            prio,
             cls.more_cards_from_deck,
             cls.more_purchases,
             cls.more_money,
@@ -415,14 +449,25 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
     return terminals[0][0]
 
 
-def _apply_action_effects(card: CardName, turn: TurnState) -> None:
+def _apply_action_effects(
+    card: CardName,
+    turn: TurnState,
+    hand: Cards | None = None,
+) -> None:
     turn.actions_left -= 1
     card_cls = Card.types.get(card)
-    if card_cls is None:
-        return
-    turn.actions_left += card_cls.more_actions
-    turn.purchases_left += card_cls.more_purchases
-    turn.money_bonus += card_cls.more_money
+    if card_cls is not None:
+        turn.actions_left += card_cls.more_actions
+        turn.purchases_left += card_cls.more_purchases
+        turn.money_bonus += card_cls.more_money
+    # Le Prêteur n'a pas more_money dans dopynion : +3$ si Cuivre écarté.
+    if (
+        card == CardName.MONEYLENDER
+        and hand is not None
+        and hand_quantity(hand, CardName.COPPER) > 0
+    ):
+        _consume_from_hand(hand, CardName.COPPER)
+        turn.money_bonus += 3
 
 
 def _consume_from_hand(hand: Cards, card: CardName) -> None:
@@ -458,7 +503,10 @@ def keep_value(card: CardName) -> int:
             CardName.PORT: 7,
             CardName.VILLAGE: 6,
             CardName.SMITHY: 5,
-            CardName.CHAPEL: 4,
+            CardName.MINE: 9,
+            CardName.MONEYLENDER: 8,
+            CardName.REMODEL: 6,
+            CardName.CHAPEL: 11,
         }.get(card, 0)
         return (
             20
@@ -505,8 +553,11 @@ def gain_score(card: CardName, mem: GameMemory) -> int:
         CardName.COUNCILROOM: 118,
         CardName.DUCHY: 110 if late else 28,
         CardName.GARDENS: 100 if gardens_time or approx_deck_size(mem) >= 20 else 40,
+        CardName.MINE: 148,
+        CardName.MONEYLENDER: 136,
+        CardName.CHAPEL: 152,
+        CardName.REMODEL: 90 if late else 55,
         CardName.SILVER: 80,
-        CardName.CHAPEL: 70,
         CardName.ESTATE: 24 if endgame else 4,
         CardName.COPPER: 1,
         CardName.BUREAUCRAT: 50,
@@ -608,9 +659,10 @@ def skip_reception(card: CardName, hand: list[CardName]) -> bool:
 
 
 def choose_money_to_upgrade(money_cards: list[CardName]) -> CardName:
+    """Mine : Cuivre→Argent en priorité, sinon Argent→Or."""
     order = (
-        CardName.SILVER,
         CardName.COPPER,
+        CardName.SILVER,
         CardName.CURSEDGOLD,
         CardName.GOLD,
         CardName.PLATINUM,
@@ -648,7 +700,7 @@ def _decide_play_inner(game: Game, game_id: str) -> str:
         action = choose_action(player.hand, game)
         if action is not None:
             _consume_from_hand(player.hand, action)
-            _apply_action_effects(action, turn)
+            _apply_action_effects(action, turn, player.hand)
             decision = f"ACTION {action.value}"
             logger.info(
                 "game=%s actions_left=%s money_bonus=%s -> %s",

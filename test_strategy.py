@@ -84,7 +84,12 @@ def main() -> None:
     init_game("prio")
     mem = _memory("prio")
 
-    check("$3 silver", choose_buy(make_game({}), 3, mem), CardName.SILVER)
+    check("$3 silver (sans chapel)", choose_buy(make_game({}), 3, mem), CardName.SILVER)
+    check(
+        "$3 chapel prioritaire",
+        choose_buy(make_game({}, stock=stock()), 3, mem),
+        CardName.CHAPEL,
+    )
     check("$6 gold", choose_buy(make_game({}), 6, mem), CardName.GOLD)
     check("$8 province", choose_buy(make_game({}), 8, mem), CardName.PROVINCE)
     check(
@@ -94,7 +99,17 @@ def main() -> None:
     )
     mem.bought[CardName.WITCH] = 2
     check(
-        "$5 apres witches -> festival",
+        "$5 apres witches -> mine",
+        choose_buy(
+            make_game({}, stock=stock({CardName.MINE: 10})),
+            5,
+            mem,
+        ),
+        CardName.MINE,
+    )
+    mem.bought[CardName.MINE] = 1
+    check(
+        "$5 apres mine -> festival",
         choose_buy(make_game({}, stock=stock()), 5, mem),
         CardName.FESTIVAL,
     )
@@ -104,12 +119,23 @@ def main() -> None:
         choose_buy(make_game({}, stock=stock()), 4, mem),
         CardName.MILITIA,
     )
+    mem.bought.clear()
     mem.bought[CardName.MILITIA] = 1
     mem.bought[CardName.WITCH] = 1
     check(
         "$4 village apres terminale",
         choose_buy(make_game({}, stock=stock()), 4, mem),
         CardName.FARMINGVILLAGE,
+    )
+    mem.bought[CardName.FARMINGVILLAGE] = 1
+    check(
+        "$4 pretteur apres village",
+        choose_buy(
+            make_game({}, stock=stock({CardName.MONEYLENDER: 10})),
+            4,
+            mem,
+        ),
+        CardName.MONEYLENDER,
     )
 
     mem.bought.clear()
@@ -256,9 +282,17 @@ def main() -> None:
     check("skip curse", skip_reception(CardName.CURSE, [CardName.COPPER]), True)
     check("take gold", skip_reception(CardName.GOLD, [CardName.COPPER]), False)
     check(
-        "mine silver first",
+        "mine copper first",
         choose_money_to_upgrade([CardName.GOLD, CardName.COPPER, CardName.SILVER]),
-        CardName.SILVER,
+        CardName.COPPER,
+    )
+    check(
+        "joue pretteur avec copper",
+        choose_action(
+            Cards(quantities={CardName.MONEYLENDER: 1, CardName.COPPER: 1, CardName.MILITIA: 1}),
+            make_game({}),
+        ),
+        CardName.MONEYLENDER,
     )
 
     init_game("A")
