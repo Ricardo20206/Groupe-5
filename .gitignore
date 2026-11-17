@@ -5,5 +5,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 game.log
+games/
+games_bench/
 *.egg-info/
 .env
+elo_history.jsonl

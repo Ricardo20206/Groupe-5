@@ -140,19 +140,9 @@ def main() -> None:
 
     mem.bought.clear()
     check(
-        "$6 or prioritaire (pas hireling)",
+        "$6 or",
         choose_buy(make_game({}, stock=stock()), 6, mem),
         CardName.GOLD,
-    )
-    mem.bought[CardName.GOLD] = 2
-    check(
-        "$6 hireling si or epuise et 2 or",
-        choose_buy(
-            make_game({}, stock=stock({CardName.GOLD: 0})),
-            6,
-            mem,
-        ),
-        CardName.HIRELING,
     )
     check(
         "$11 pas de colonie -> province",
@@ -176,9 +166,9 @@ def main() -> None:
         CardName.GARDENS,
     )
     check(
-        "$5 p8 duchy (3j)",
+        "$5 p9 duchy (3j)",
         choose_buy(
-            make_game({}, provinces=8, stock=stock(), n_players=3),
+            make_game({}, provinces=9, stock=stock(), n_players=3),
             5,
             mem,
         ),
