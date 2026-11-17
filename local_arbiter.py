@@ -1,10 +1,10 @@
 """
-Arbitre local dopynion pour tester la stratégie rapidement.
+Arbitre local dopynion — scores EXACTS des parties jouées (pas d'estimation Elo).
 
 Exemple :
   python local_arbiter.py
-  python local_arbiter.py --games 300 --players 3
-  python local_arbiter.py --hours 1 --games-per-hour 80
+  python local_arbiter.py --games 80 --players 2
+  python local_arbiter.py --games 80 --players 3
 """
 
 from __future__ import annotations
@@ -24,16 +24,13 @@ from dopynion import record as dopynion_record
 
 import strategy as strat
 
-# Évite d'écrire des centaines de fichiers dans games/ pendant le bench.
 _BENCH_DIR = Path(__file__).resolve().parent / "games_bench"
 _BENCH_DIR.mkdir(exist_ok=True)
 dopynion_record.records_dir = _BENCH_DIR
 
 
 def _silence_records() -> None:
-    """Record minimal : pas d'I/O disque à chaque action."""
-
-    class QuietRecord:  # noqa: D101
+    class QuietRecord:
         def __init__(self) -> None:
             from datetime import datetime
             from zoneinfo import ZoneInfo
@@ -79,8 +76,6 @@ _silence_records()
 
 
 class StrategyHooks(PlayerHooks):
-    """Branche les hooks de strategy.py sur l'arbitre local."""
-
     def __init__(self, game_id: str) -> None:
         self.game_id = game_id
 
@@ -125,15 +120,13 @@ class StrategyHooks(PlayerHooks):
 
 
 def play_strategy_turn(player: Player, game_id: str) -> None:
-    """Un tour complet piloté par strategy.choose_action / choose_buy."""
     mem = strat._memory(game_id)
     player.start_turn()
 
     safety = 0
     while player.actions_left > 0 and player.hand.contains_action() and safety < 30:
         safety += 1
-        game_data = player.game.state
-        card = strat.choose_action(player.hand.state, game_data)
+        card = strat.choose_action(player.hand.state, player.game.state)
         if card is None:
             break
         try:
@@ -147,8 +140,7 @@ def play_strategy_turn(player: Player, game_id: str) -> None:
         money = player.money + player.hand.money
         if money <= 0 and not player.hand.contains_money():
             break
-        game_data = player.game.state
-        card = strat.choose_buy(game_data, money, mem, player.hand.state)
+        card = strat.choose_buy(player.game.state, money, mem, player.hand.state)
         if card is None:
             break
         try:
@@ -161,10 +153,7 @@ def play_strategy_turn(player: Player, game_id: str) -> None:
 
 
 def play_big_money_turn(player: Player) -> None:
-    """Adversaire BM simple : 1 Smithy/Witch, Or, Province, Duché tardif."""
     player.start_turn()
-
-    # Actions : villages puis attaque/draw
     safety = 0
     while player.actions_left > 0 and player.hand.contains_action() and safety < 20:
         safety += 1
@@ -204,7 +193,6 @@ def play_big_money_turn(player: Player) -> None:
         ):
             choice = CardName.WITCH
         elif money >= 4 and stock.quantity(CardName.SMITHY) > 0:
-            # 1 smithy max : approx via deck
             owned = sum(
                 1
                 for c in (player.hand + player.deck + player.discard + player.played_cards)
@@ -214,7 +202,12 @@ def play_big_money_turn(player: Player) -> None:
                 choice = CardName.SMITHY
         if choice is None and money >= 3 and stock.quantity(CardName.SILVER) > 0:
             choice = CardName.SILVER
-        if choice is None and money >= 2 and provinces_left <= 2 and stock.quantity(CardName.ESTATE) > 0:
+        if (
+            choice is None
+            and money >= 2
+            and provinces_left <= 2
+            and stock.quantity(CardName.ESTATE) > 0
+        ):
             choice = CardName.ESTATE
         if choice is None:
             break
@@ -222,7 +215,6 @@ def play_big_money_turn(player: Player) -> None:
             player.buy(choice)
         except Exception:
             break
-
     player.end_turn()
 
 
@@ -245,10 +237,11 @@ def play_random_turn(player: Player) -> None:
         buyables = [
             name
             for name, cls in Card.types.items()
-            if cls.cost <= money and name in player.game.stock and player.game.stock.quantity(name) > 0
+            if cls.cost <= money
+            and name in player.game.stock
+            and player.game.stock.quantity(name) > 0
+            and name != CardName.COLONY
         ]
-        # Évite Colonie / piles exotiques trop chères inutiles
-        buyables = [b for b in buyables if b != CardName.COLONY]
         if not buyables:
             break
         try:
@@ -280,10 +273,8 @@ def run_game(
         opp = Player(f"Adverse-{i+1}")
         opp.hooks = DefaultPlayerHooks()
         game.add_player(opp)
-        if opponent == "random":
-            opponents.append((opp, play_random_turn))
-        else:
-            opponents.append((opp, play_big_money_turn))
+        fn = play_random_turn if opponent == "random" else play_big_money_turn
+        opponents.append((opp, fn))
 
     game.start()
 
@@ -314,247 +305,107 @@ def run_game(
     }
 
 
-def fetch_live_ranking() -> dict[str, tuple[int, int, str]]:
-    """{clé: (elo, parties, url)} pour einstein / empire / #1."""
-    import re
-    import urllib.request
-
-    html = urllib.request.urlopen(
-        "https://dopynion.lecalamar.fr/",
-        timeout=20,
-    ).read().decode("utf-8")
-    rows = sorted(
-        (
-            (int(elo), int(games), url)
-            for url, elo, games in re.findall(
-                r"<tr><td>(.*?)</td><td>(\d+)</td><td>(\d+)</td></tr>",
-                html,
-            )
-        ),
-        reverse=True,
-    )
-    out: dict[str, tuple[int, int, str]] = {}
-    if rows:
-        out["leader"] = (rows[0][0], rows[0][1], rows[0][2])
-    for elo, games, url in rows:
-        if "einstein" in url:
-            out["einstein"] = (elo, games, url)
-        if "le-4eme-empire.alwaysdata" in url:
-            out["empire"] = (elo, games, url)
-    # Plateau = moyenne Elo top 8 (adversaires typiques)
-    top8 = [e for e, _, _ in rows[:8]]
-    if top8:
-        out["field"] = (int(sum(top8) / len(top8)), 0, "top8")
-    return out
-
-
-def simulate_hour_elo(
-    winrate: float,
-    *,
-    games: int,
-    our_elo: float,
-    field_elo: float,
-    k: float = 16.0,
-    samples: int = 200,
-) -> dict:
-    """Simule `samples` trajectoires d'1 h (victoires aléatoires selon winrate)."""
-    finals: list[float] = []
-    for _ in range(samples):
-        elo = float(our_elo)
-        for _ in range(games):
-            expected = 1.0 / (1.0 + 10 ** ((field_elo - elo) / 400.0))
-            score = 1.0 if random.random() < winrate else 0.0
-            elo += k * (score - expected)
-        finals.append(elo)
-    finals.sort()
-    mean = sum(finals) / len(finals)
-    return {
-        "games": games,
-        "elo_start": our_elo,
-        "elo_mean": round(mean, 1),
-        "elo_p10": round(finals[int(0.10 * len(finals))], 1),
-        "elo_p50": round(finals[int(0.50 * len(finals))], 1),
-        "elo_p90": round(finals[int(0.90 * len(finals))], 1),
-        "delta_mean": round(mean - our_elo, 1),
-        "field": field_elo,
-    }
-
-
-def print_rapport(
-    *,
-    total: int,
-    wins: int,
-    ties: int,
-    losses: int,
-    crashes: int,
-    vp: list[int],
-    elapsed: float,
-    players: int,
-    opponent: str,
-    hours: float,
-    games_per_hour: int,
-    our_elo: float,
-    field_elo: float,
-    leader_elo: float,
-    live: bool,
-) -> None:
-    wr = wins / total if total else 0.0
-    games_hour = int(games_per_hour * hours)
-    sim = simulate_hour_elo(
-        wr,
-        games=games_hour,
-        our_elo=our_elo,
-        field_elo=field_elo,
-    )
-
-    print("\n" + "=" * 60)
-    print(" VERDICT ARBITRE LOCAL")
-    print("=" * 60)
-    print(f" Parties testées     : {total} ({players} joueurs, vs {opponent})")
-    print(f" Temps de calcul     : {elapsed:.1f}s")
-    print(f" Victoires           : {wins}/{total}  ({wr:.0%})")
-    print(f" Nuls / Défaites     : {ties} / {losses}")
-    print(f" Crashes (-10000)    : {crashes}")
-    print(f" Score VP moyen      : {sum(vp)/len(vp):.1f}  (min {min(vp)}, max {max(vp)})")
-
-    gagne_local = wr >= 0.55 and crashes == 0
-    print()
-    if crashes:
-        print(" → En local : NON FIABLE (il y a des crashes).")
-    elif wr >= 0.60:
-        print(" → En local : OUI, on gagne clairement contre cet adversaire.")
-    elif wr >= 0.55:
-        print(" → En local : OUI, on gagne plus souvent qu'on ne perd.")
-    elif wr >= 0.45:
-        print(" → En local : ÉGALITÉ / MATCHS SERRÉS (pas assez pour viser le #1).")
-    else:
-        print(" → En local : NON, on perd trop souvent.")
-
-    print()
-    print("-" * 60)
-    print(f" ESTIMATION APRÈS {hours:g} HEURE(S) SUR LE SERVEUR")
-    print("-" * 60)
-    src = "classement live" if live else "valeurs manuelles"
-    print(f" Elo actuel (einstein): {our_elo:.0f}  ({src})")
-    print(f" Elo #1 actuel        : {leader_elo:.0f}")
-    print(f" Plateau adversaires  : {field_elo:.0f} (moyenne top)")
-    print(f" Parties simulées / h : {games_hour}")
-    print(f" Winrate utilisé         : {wr:.0%}")
-    print()
-    print(f" Elo estimé (moyenne) : {sim['elo_mean']:.0f}  ({sim['delta_mean']:+.0f})")
-    print(f" Elo estimé (médiane) : {sim['elo_p50']:.0f}")
-    print(f" Fourchette probable  : {sim['elo_p10']:.0f} … {sim['elo_p90']:.0f}")
-    print()
-
-    atteint_top = sim["elo_p50"] >= leader_elo
-    approche = sim["elo_p90"] >= leader_elo - 50
-    if atteint_top:
-        print(
-            f" → Après {hours:g} h : OUI, score estimé ~{sim['elo_p50']:.0f} "
-            f"— suffisant pour viser la 1ère place (#{leader_elo:.0f} aujourd'hui)."
-        )
-    elif approche:
-        print(
-            f" → Après {hours:g} h : PRESQUE — score estimé ~{sim['elo_p50']:.0f}, "
-            f"encore sous le #1 ({leader_elo:.0f}), mais dans la course."
-        )
-    elif sim["delta_mean"] > 30:
-        print(
-            f" → Après {hours:g} h : ON MONTE (≈ {sim['elo_p50']:.0f}), "
-            f"mais PAS encore 1er (il faut ~{leader_elo:.0f})."
-        )
-    else:
-        print(
-            f" → Après {hours:g} h : PAS EN TÊTE — score estimé ≈ {sim['elo_p50']:.0f} "
-            f"(#1 à {leader_elo:.0f}). Il faut une strat plus forte."
-        )
-    print("=" * 60)
-    print(
-        "Note : l'adversaire local (Big Money) est plus faible que Empire/bowser ; "
-        "sur le serveur le gain réel peut être un peu plus bas."
-    )
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Arbitre local + verdict 1 h")
-    parser.add_argument("--games", type=int, default=200, help="Parties de test local")
+    parser = argparse.ArgumentParser(
+        description="Arbitre local : scores EXACTS (VP) des parties jouées",
+    )
+    parser.add_argument(
+        "--games",
+        type=int,
+        default=80,
+        help="Nombre exact de parties à jouer (défaut 80 ≈ 1 h serveur)",
+    )
     parser.add_argument("--players", type=int, default=2, choices=(2, 3, 4))
     parser.add_argument("--opponent", choices=("bm", "random"), default="bm")
-    parser.add_argument("--hours", type=float, default=1.0)
-    parser.add_argument("--games-per-hour", type=int, default=80)
-    parser.add_argument("--our-elo", type=float, default=None)
-    parser.add_argument("--field-elo", type=float, default=None)
-    parser.add_argument("--leader-elo", type=float, default=None)
     parser.add_argument(
-        "--no-live",
+        "--show-each",
         action="store_true",
-        help="Ne pas lire le classement dopynion",
+        help="Afficher le score VP de chaque partie",
     )
     args = parser.parse_args()
 
-    live = not args.no_live
-    our_elo = args.our_elo
-    field_elo = args.field_elo
-    leader_elo = args.leader_elo
-    if live:
-        try:
-            ranking = fetch_live_ranking()
-            if our_elo is None and "einstein" in ranking:
-                our_elo = float(ranking["einstein"][0])
-            if leader_elo is None and "leader" in ranking:
-                leader_elo = float(ranking["leader"][0])
-            if field_elo is None and "field" in ranking:
-                field_elo = float(ranking["field"][0])
-            print("Classement live chargé.")
-            if "einstein" in ranking:
-                print(f"  einstein = {ranking['einstein'][0]}")
-            if "leader" in ranking:
-                print(f"  #1       = {ranking['leader'][0]}  ({ranking['leader'][2]})")
-            if "empire" in ranking:
-                print(f"  Empire   = {ranking['empire'][0]}")
-        except Exception as exc:
-            print(f"Classement live indisponible ({exc}), valeurs par défaut.")
-            live = False
-
-    our_elo = 1180.0 if our_elo is None else our_elo
-    field_elo = 1400.0 if field_elo is None else field_elo
-    leader_elo = 1495.0 if leader_elo is None else leader_elo
-
     wins = ties = losses = crashes = 0
-    vp: list[int] = []
+    our_scores: list[int] = []
+    opp_best_scores: list[int] = []
+    results: list[dict] = []
+
+    print(
+        f"Arbitre local — {args.games} parties exactes "
+        f"({args.players} joueurs, vs {args.opponent})"
+    )
     t0 = time.perf_counter()
     for i in range(args.games):
         result = run_game(n_players=args.players, opponent=args.opponent)
-        vp.append(result["our"])
+        results.append(result)
+        our_scores.append(result["our"])
+        others = [s for n, s in result["scores"].items() if n != "Groupe 5"]
+        opp_best_scores.append(max(others))
+
         if result["crash"]:
             crashes += 1
             losses += 1
+            tag = "CRASH"
         elif result["win"]:
             wins += 1
+            tag = "WIN"
         elif result["tie"]:
             ties += 1
+            tag = "NUL"
         else:
             losses += 1
-        if (i + 1) % 50 == 0:
-            print(f"  test {i+1}/{args.games}…")
+            tag = "PERDU"
+
+        if args.show_each:
+            print(
+                f"  partie {i+1:3d}  {tag:5s}  "
+                f"nous={result['our']:5d}  adverse={max(others):5d}"
+            )
+        elif (i + 1) % 20 == 0:
+            print(f"  … {i+1}/{args.games}")
 
     elapsed = time.perf_counter() - t0
-    print_rapport(
-        total=args.games,
-        wins=wins,
-        ties=ties,
-        losses=losses,
-        crashes=crashes,
-        vp=vp,
-        elapsed=elapsed,
-        players=args.players,
-        opponent=args.opponent,
-        hours=args.hours,
-        games_per_hour=args.games_per_hour,
-        our_elo=our_elo,
-        field_elo=field_elo,
-        leader_elo=leader_elo,
-        live=live,
+    total_vp = sum(our_scores)
+    avg_vp = total_vp / len(our_scores)
+    avg_opp = sum(opp_best_scores) / len(opp_best_scores)
+
+    print()
+    print("=" * 56)
+    print(" SCORES EXACTS (parties réellement jouées)")
+    print("=" * 56)
+    print(f" Parties jouées     : {args.games}")
+    print(f" Temps de calcul    : {elapsed:.1f}s")
+    print(f" Victoires exactes  : {wins}")
+    print(f" Nuls exacts        : {ties}")
+    print(f" Défaites exactes   : {losses}")
+    print(f" Crashes            : {crashes}")
+    print(f" Taux de victoire   : {wins}/{args.games} = {100*wins/args.games:.1f}%")
+    print()
+    print(f" Score VP total     : {total_vp}")
+    print(f" Score VP moyen     : {avg_vp:.2f}")
+    print(f" Score VP min/max   : {min(our_scores)} / {max(our_scores)}")
+    print(f" VP moyen adverse   : {avg_opp:.2f}")
+    print()
+    if crashes:
+        print(" Verdict : crashes détectés — strat non fiable.")
+    elif wins > losses:
+        print(
+            f" Verdict : on GAGNE ({wins} wins > {losses} défaites), "
+            f"score moyen exact = {avg_vp:.2f} VP."
+        )
+    elif wins == losses:
+        print(
+            f" Verdict : ÉGALITÉ ({wins} wins / {losses} défaites), "
+            f"score moyen exact = {avg_vp:.2f} VP."
+        )
+    else:
+        print(
+            f" Verdict : on PERD ({wins} wins < {losses} défaites), "
+            f"score moyen exact = {avg_vp:.2f} VP."
+        )
+    print("=" * 56)
+    print(
+        "Ces chiffres sont exacts pour l'arbitre local "
+        "(pas le classement Elo du serveur)."
     )
 
 
